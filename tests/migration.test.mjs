@@ -214,10 +214,10 @@ test('打开 v7 项目时按同一迁移链自动升级到当前协议', async t
   const manager = createProjectManager({ syncProjectAssets: async () => ({}) });
   try {
     const opened = await manager.open({ projectRoot: root });
-    assert.deepEqual(opened.projectUpgrade, { upgraded: true, from: 7, schemaVersion: 14 });
-    assert.equal(opened.manifest.schemaVersion, 14);
+    assert.deepEqual(opened.projectUpgrade, { upgraded: true, from: 7, schemaVersion: 15 });
+    assert.equal(opened.manifest.schemaVersion, 15);
     const onDisk = JSON.parse(await readFile(join(root, '.mechanics', 'workspace.json'), 'utf8'));
-    assert.equal(onDisk.schemaVersion, 14);
+    assert.equal(onDisk.schemaVersion, 15);
     assert.deepEqual(onDisk.rules, 'rules.json');
     const explicit = JSON.stringify({ mode: 'label', expandedNodeIds: [] });
     assert.ok(opened.mechanics.every(item => item.schemaVersion === 9 && item.implementationStatus === 'design' && JSON.stringify(item.taxonomyPresentation) === explicit));
@@ -297,7 +297,7 @@ test('旧项目迁移只在显式命令中识别旧根、旧技能和旧导出',
   assert.equal(result.execute, true);
   assert.equal(result.removedLegacyCatalog, exportRoot);
   const migratedManifest = JSON.parse(await readFile(join(root, '.mechanics', 'workspace.json'), 'utf8'));
-  assert.equal(migratedManifest.schemaVersion, 14);
+  assert.equal(migratedManifest.schemaVersion, 15);
   assert.equal(migratedManifest.agentExportPath, 'mechanics');
   await assert.rejects(lstat(join(root, '.game-graph')), { code: 'ENOENT' });
   await assert.rejects(lstat(join(root, '.agents', 'skills', 'game-mechanic-search')), { code: 'ENOENT' });

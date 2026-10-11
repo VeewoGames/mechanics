@@ -1,5 +1,5 @@
 import Ajv from 'ajv';
-import { assertSpecializes } from './graph.mjs';
+import { assertPartOf, assertSpecializes } from './graph.mjs';
 import { registeredMechanicIds, visibleMechanicIds } from './view.mjs';
 import schema from '../../schemas/protocol.schema.json' with { type: 'json' };
 import { normalizeSearchTerm, semanticIdProblem, semanticRuleId } from './identity.mjs';
@@ -140,25 +140,40 @@ export function validateWorkspace({ manifest, definitions, rules, mechanics, vie
     }
   }
   const graphIds = unique(mechanics, '机制图清单');
-  const workspaceEndpointPairs = new Map();
+  const workspaceRelationKeys = new Map(), legacyEndpointKeys = new Map(), structuralPairs = new Map();
   for (const [ruleIndex, edge] of rules.rules.entries()) {
-      if (edge.relation === 'specializes' && (edge.sourceQualifiers || edge.targetQualifiers)) {
-        throw new ContractError('QUALIFIER_ON_SPECIALIZES', `is-a 只能连接概念分类，不能限定规则参与者：${edge.id}`);
+      if (edge.relation !== 'influence' && (edge.sourceQualifiers || edge.targetQualifiers)) {
+        throw new ContractError('QUALIFIER_ON_STRUCTURAL_RELATION', `结构关系不能限定规则参与者：${edge.id}`);
+      }
+      if (rules.schemaVersion === 1 && edge.relation === 'part-of') {
+        throw new ContractError('RELATION_REQUIRES_RULES_V2', `part-of 只允许写入 rules v2：${edge.id}`);
       }
       validateRuleQualifiers(edge.sourceQualifiers, nodes, `${edge.id}.source`);
       validateRuleQualifiers(edge.targetQualifiers, nodes, `${edge.id}.target`);
-      const pair = `${edge.source}\u0000${edge.target}`;
-      if (workspaceEndpointPairs.has(pair)) throw new ContractError('DUPLICATE_ENDPOINT_RULE',
-        `概念 ${edge.source} 到 ${edge.target} 已在规则 ${workspaceEndpointPairs.get(pair)} 中存在；全工作区同一有向端点对只允许一条规则`);
-      workspaceEndpointPairs.set(pair, edge.id);
+      const endpointKey = [edge.source, edge.target].join('\u0000');
+      if (rules.schemaVersion === 1 && legacyEndpointKeys.has(endpointKey)) throw new ContractError('DUPLICATE_ENDPOINT_RULE',
+        `概念 ${edge.source} 到 ${edge.target} 已在规则 ${legacyEndpointKeys.get(endpointKey)} 中存在`);
+      legacyEndpointKeys.set(endpointKey, edge.id);
+      const relationKey = [edge.source, edge.target, edge.relation].join('\u0000');
+      if (workspaceRelationKeys.has(relationKey)) throw new ContractError(rules.schemaVersion === 1 ? 'DUPLICATE_ENDPOINT_RULE' : 'DUPLICATE_ENDPOINT_RELATION',
+        `概念 ${edge.source} 到 ${edge.target} 的 ${edge.relation} 已在规则 ${workspaceRelationKeys.get(relationKey)} 中存在`);
+      workspaceRelationKeys.set(relationKey, edge.id);
+      if (edge.relation === 'specializes' || edge.relation === 'part-of') {
+        const pair = [edge.source, edge.target].join('\u0000'), existing = structuralPairs.get(pair);
+        if (existing && existing.relation !== edge.relation) throw new ContractError('STRUCTURAL_RELATION_CONFLICT',
+          `概念 ${edge.source} 到 ${edge.target} 不能同时声明 specializes 与 part-of`, { firstRuleId: existing.id, secondRuleId: edge.id });
+        structuralPairs.set(pair, edge);
+      }
       requireReference(nodes, edge.source, manifest.rules, `rules[${ruleIndex}].source`);
       requireReference(nodes, edge.target, manifest.rules, `rules[${ruleIndex}].target`);
-      const expectedId = semanticRuleId(edge.source, edge.target, new Set());
+      const expectedId = rules.schemaVersion === 2
+        ? semanticRuleId(edge.source, edge.target, edge.relation, new Set())
+        : semanticRuleId(edge.source, edge.target, new Set());
       if (edge.id !== expectedId) throw new ContractError('RULE_ID_MISMATCH',
-        `规则 ID 必须由端点确定：${edge.id} 应为 ${expectedId}`);
+        `规则 ID 必须由端点和关系确定：${edge.id} 应为 ${expectedId}`);
   }
   unique(rules.rules, '规则库');
-  try { assertSpecializes(rules.rules); }
+  try { assertSpecializes(rules.rules); assertPartOf(rules.rules); }
   catch (error) {
     error.details = { resource: manifest.rules, field: 'rules', ...error.details };
     throw error;

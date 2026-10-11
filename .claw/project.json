@@ -1,5 +1,5 @@
 {
-  "version": "0.2.39",
+  "version": "0.2.50",
   "id": "game-graph",
   "name": "Game-Graph",
   "maxTasksToKeep": 9,
@@ -7,7 +7,6 @@
   "autoUpdate": true,
   "goalMode": true,
   "knowledgeWriter": {
-    "executionPolicy": "subagent",
     "externalSkills": [],
     "model": null,
     "reasoningEffort": "medium",

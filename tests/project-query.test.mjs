@@ -73,9 +73,7 @@ test('search 双概念返回双向直接规则，且不要求机制范围', () =
 
 test('impact 短链优先，直接 is-a 是分类而不是影响', () => {
   const taxonomy = queryWorkspace(workspace, { command: 'impact', from: 'soldier', to: 'unit' });
-  assert.equal(taxonomy.paths[0].chain, 'soldier is-a> unit');
-  assert.equal(taxonomy.paths[0].kind, 'taxonomy');
-  assert.equal(taxonomy.paths[0].effect, null);
+  assert.deepEqual(taxonomy.paths, []);
   const impact = queryWorkspace(workspace, { command: 'impact', from: 'soldier', to: 'health' });
   assert.equal(impact.paths[0].chain, 'soldier +> attack -> health');
   assert.equal(impact.paths[0].effect, 'negative');

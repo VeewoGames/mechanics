@@ -3,7 +3,7 @@ import { resolve, relative, posix, dirname } from 'node:path';
 import { isDeepStrictEqual } from 'node:util';
 import { readWorkspace, readDocument, discover, assertRelativeFile, ensureWorkspaceDirectory, workspacePath, workspaceResourceRevisions, workspaceRevision, semanticWorkspaceDocument } from './workspace.mjs';
 import { encode, commitFile, commitFiles, acquireWorkspaceLock } from './files.mjs';
-import { planV7ToV8Migration, planV8ToV9Migration, planV9ToV10Migration, planV10ToV11Migration, planV11ToV12Migration, planV12ToV13Migration, planV13ToV14Migration, WORKSPACE_MIGRATION_STEPS, planV9DanglingNodeRepair } from './migration.mjs';
+import { planV7ToV8Migration, planV8ToV9Migration, planV9ToV10Migration, planV10ToV11Migration, planV11ToV12Migration, planV12ToV13Migration, planV13ToV14Migration, planV14ToV15Migration, WORKSPACE_MIGRATION_STEPS, planV9DanglingNodeRepair } from './migration.mjs';
 import { assertDocument, validateWorkspace, ContractError } from '../domain/validate.mjs';
 import { composeView } from '../domain/view.mjs';
 import { repairPresentationMemberReferences } from '../domain/presentation.mjs';
@@ -1076,6 +1076,7 @@ export async function migrateWorkspace(workspaceRoot, options = {}) {
     : from === 11 && to === 12 ? planV11ToV12Migration(root)
     : from === 12 && to === 13 ? planV12ToV13Migration(root)
     : from === 13 && to === 14 ? planV13ToV14Migration(root)
+    : from === 14 && to === 15 ? planV14ToV15Migration(root)
     : from === 9 && to === 9 ? planV9DanglingNodeRepair(root)
       : Promise.reject(new ContractError('MIGRATION_VERSION_UNSUPPORTED', `不支持 v${from} → v${to} 迁移`));
   if (!execute) {

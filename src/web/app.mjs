@@ -14,7 +14,7 @@ import { icon } from '/icons.mjs';
 const $ = id => document.getElementById(id);
 const clone = value => structuredClone(value);
 const json = value => JSON.stringify(value);
-const arrow = edge => edge.relation === 'specializes' ? ' is-a→ ' : edge.sign === 1 ? ' ＋→ ' : edge.sign === -1 ? ' −→ ' : ' ？→ ';
+const arrow = edge => edge.relation === 'specializes' ? ' is-a→ ' : edge.relation === 'part-of' ? ' part-of→ ' : edge.sign === 1 ? ' ＋→ ' : edge.sign === -1 ? ' −→ ' : ' ？→ ';
 const NODE_COLOR_OPTIONS = [
   { color: null, label: '默认' },
   { color: '#D5E8F7', label: '浅蓝' }, { color: '#E5DCF4', label: '浅紫' }, { color: '#F5DDE7', label: '玫瑰' },
@@ -403,6 +403,7 @@ function updateStatus() {
   $('positive-tool').disabled = !workspace || definitionMode() || activeId === null || busy();
   $('negative-tool').disabled = $('positive-tool').disabled;
   $('random-tool').disabled = $('positive-tool').disabled;
+  $('part-of-tool').disabled = $('positive-tool').disabled;
   updateRelationTools();
   $('save-state').textContent = legacy ? '旧记录已保留' : viewMode() ? '视图自动保存' : dirty() ? '机制未保存' : '机制已保存';
   $('save').hidden = viewMode() || legacy;
@@ -443,9 +444,9 @@ function updateStatus() {
   $('compute-message').textContent = computeState?.kind === 'layout' ? '正在后台排版…' : '正在后台重绘连线…';
 }
 // is-a 不再有连线模式：父概念在概念面板与对话框中指定，relationMode 只服务影响连线。
-const relationMode = relation => relation === 'specializes' ? 'select' : relation === 'random' ? 'random' : relation === 1 ? 'positive' : 'negative';
+const relationMode = relation => relation === 'part-of' ? 'part-of' : relation === 'specializes' ? 'select' : relation === 'random' ? 'random' : relation === 1 ? 'positive' : 'negative';
 function updateRelationTools() {
-  for (const [mode, relation] of [['positive', 1], ['negative', -1], ['random', 'random']]) {
+  for (const [mode, relation] of [['positive', 1], ['negative', -1], ['random', 'random'], ['part-of', 'part-of']]) {
     const selected = lastRelation === relation;
     const control = $(mode + '-tool'); control.setAttribute('aria-checked', String(selected)); control.classList.toggle('is-selected', selected); control.tabIndex = selected ? 0 : -1;
   }
@@ -607,7 +608,7 @@ function classifyTaxonomyChange(beforeRules) {
 }
 async function setConceptParent(conceptId, parentId) {
   const beforeRules = workspace.rules.rules;
-  const nextRules = setSpecializesParent(beforeRules, conceptId, parentId);
+  const nextRules = setSpecializesParent(beforeRules, conceptId, parentId, { schemaVersion: workspace.rules.schemaVersion });
   if (nextRules === beforeRules) return false;
   await write(revision => api('/api/concept-taxonomy', { revision, rules: { ...clone(workspace.rules), rules: nextRules } }));
   // write() 只刷新侧栏；is-a 会改变画布投影、节点标签与详情栏，必须重画才能立即看到结果，
@@ -624,7 +625,7 @@ async function setEdgeQualifiers(id, side, qualifiers) {
 }
 async function editEdgeQualifiers(id, side) {
   const edge = workspace.rules.rules.find(item => item.id === id);
-  if (!edge || edge.relation === 'specializes') return;
+  if (!edge || edge.relation !== 'influence') return;
   const sideLabel = side === 'sourceQualifiers' ? '源参与者' : '目标参与者';
   const form = { rows: qualifierRowsFromCanonical(edge[side]) };
   $('dialog').classList.add('concept-dialog');
@@ -1199,12 +1200,13 @@ function inspect() {
   }
   if (selection.type === 'edge') {
     const edge = graph.edges.find(item => item.id === selection.id); if (!edge) { $('inspector').hidden = true; return; }
-    $('inspector-title').textContent = edge.relation === 'specializes' ? '特化 / 是某种关系' : '影响关系';
-    detail(panel, '影响方向', name(edge.source) + arrow(edge) + name(edge.target));
+    $('inspector-title').textContent = edge.relation === 'specializes' ? '特化 / 是某种关系' : edge.relation === 'part-of' ? '组成 / 是其一部分关系' : '影响关系';
+    detail(panel, edge.relation === 'influence' ? '影响方向' : '结构方向', name(edge.source) + arrow(edge) + name(edge.target));
     const qualifierText = qualifiers => (qualifiers ?? []).map(item => `${item.key}：${item.value.kind === 'concept' ? name(item.value.conceptId) : String(item.value.value)}`).join('；');
     if (edge.sourceQualifiers?.length) detail(panel, '源参与者限定', qualifierText(edge.sourceQualifiers));
     if (edge.targetQualifiers?.length) detail(panel, '目标参与者限定', qualifierText(edge.targetQualifiers));
     if (edge.relation === 'specializes') detail(panel, '特化 / 是某种语义', '具体概念沿箭头指向上位概念，表示“是某种”；不写入影响符号或继承设置。');
+    if (edge.relation === 'part-of') detail(panel, '组成语义', '局部沿箭头指向整体，表示稳定组成；不传递、不继承，也不产生影响结论。');
     const direct = edge.steps.length === 1;
     if (direct) {
       const id = edge.steps[0].ruleId ?? edge.id, originalEdge = workspace.rules.rules.find(item => item.id === id);
@@ -1212,6 +1214,8 @@ function inspect() {
         // is-a 只有一个写入口：概念的 is-a 父概念字段；连线面板只做只读呈现。
         detail(panel, 'is-a 父概念', name(originalEdge.target));
         panel.append(el('p', 'is-a 由子概念的父概念字段维护；请在节点属性面板中更换或清除。', 'note'));
+      } else if (originalEdge.relation === 'part-of') {
+        detail(panel, '局部', name(originalEdge.source)); detail(panel, '整体', name(originalEdge.target));
       } else {
         field(panel, '关系', String(originalEdge.sign), {
           options: [['1', '＋ 正向影响'], ['-1', '− 负向影响'], ['random', '？ 随机影响']],
@@ -1222,7 +1226,7 @@ function inspect() {
           },
         });
       }
-      if (originalEdge.relation !== 'specializes') {
+      if (originalEdge.relation === 'influence') {
         const ruleText = field(panel, '规则（可选）', originalEdge.ruleText ?? '', { multiline: true, onChange: value => { void updateGlobalRule(id, item => { item.ruleText = value; }).catch(showError); } });
         ruleText.maxLength = 8000;
         ruleText.placeholder = '填写规则；如有条件约束，请一并写入。';
@@ -1246,7 +1250,7 @@ function inspect() {
     } else panel.append(el('p', '这是由多条直接规则聚合出的关系；请打开其中一条直接规则编辑。', 'note'));
     edge.steps.forEach(step => {
       detail(panel, '全局规则 / ' + (step.ruleId ?? step.id), name(step.source) + arrow(step) + name(step.target)
-        + (step.relation === 'specializes' ? '\n特化 / 是某种关系' : step.ruleText?.trim() ? '\n规则：' + step.ruleText : '\n规则：未填写'));
+        + (step.relation === 'specializes' ? '\n特化 / 是某种关系' : step.relation === 'part-of' ? '\n组成 / 是其局部' : step.ruleText?.trim() ? '\n规则：' + step.ruleText : '\n规则：未填写'));
     });
     return;
   }
@@ -1390,7 +1394,7 @@ async function editConcept(id) {
       const definitionsChanged = json(document) !== json(workspace.definitions);
       const currentParent = workspace.rules.rules.find(rule => rule.relation === 'specializes' && rule.source === id)?.target ?? null;
       const parentId = editor.form.parentId || null;
-      const rules = parentId === currentParent ? null : { ...clone(workspace.rules), rules: setSpecializesParent(workspace.rules.rules, id, parentId) };
+      const rules = parentId === currentParent ? null : { ...clone(workspace.rules), rules: setSpecializesParent(workspace.rules.rules, id, parentId, { schemaVersion: workspace.rules.schemaVersion }) };
       if (!definitionsChanged && !rules) return;
       const beforeRules = workspace.rules.rules;
       fields.disabled = true;
@@ -1489,7 +1493,7 @@ async function addNode() {
         for (const [childId, parentId] of parents) {
           if (!session.selected.has(childId)) continue;
           if (!known.has(parentId)) throw new Error('is-a 父概念不存在或未被本次引用：' + parentId);
-          nextRules = setSpecializesParent(nextRules ?? workspace.rules.rules, childId, parentId);
+          nextRules = setSpecializesParent(nextRules ?? workspace.rules.rules, childId, parentId, { schemaVersion: workspace.rules.schemaVersion });
         }
         session.commit = new ReferenceCommit(prepareReference({ workspace, draft, selected: [...session.selected], candidates,
           rules: nextRules ? { ...clone(workspace.rules), rules: nextRules } : null,
@@ -1695,7 +1699,7 @@ async function addTerm() {
     }
     // 指定 is-a 时概念必须与规则一起提交；候选基于当前定义草稿，未保存的概念编辑一并落盘。
     const definitions = { ...clone(draft), nodes: [...clone(draft.nodes), node] };
-    const rules = { ...clone(workspace.rules), rules: setSpecializesParent(workspace.rules.rules, node.id, parentId) };
+    const rules = { ...clone(workspace.rules), rules: setSpecializesParent(workspace.rules.rules, node.id, parentId, { schemaVersion: workspace.rules.schemaVersion }) };
     await write(revision => api('/api/concept-taxonomy', { revision, definitions, rules }));
     draft = clone(workspace.definitions); baseline = clone(draft); conceptEditDirty = false;
     glossary.focusNode(node.id); return true;
@@ -1704,14 +1708,17 @@ async function addTerm() {
 async function createRule(source, target, relation) {
   if (busy() || definitionMode() || viewMode() || activeId === null) return false;
   if (!draft.focusNodeIds.includes(source) || !draft.focusNodeIds.includes(target)) throw new Error('请先把两个节点引用到当前机制图，再建立关系。');
-  if (workspace.rules.rules.some(edge => edge.source === source && edge.target === target)) {
-    showError('这两个概念之间已有同向规则；请编辑现有规则。');
+  const relationName = relation === 'part-of' ? 'part-of' : 'influence';
+  if (workspace.rules.rules.some(edge => edge.source === source && edge.target === target && edge.relation === relationName)) {
+    showError('这两个概念之间已有同向同类规则；请编辑现有规则。');
     return false;
   }
-  const id = semanticRuleId(source, target, new Set(workspace.rules.rules.map(edge => edge.id)));
+  const id = semanticRuleId(source, target, relationName, new Set(workspace.rules.rules.map(edge => edge.id)));
   const rules = clone(workspace.rules);
-  // 连线手势只创建影响规则；is-a 由概念的父概念字段写入，不再有连线入口。
-  rules.rules.push({ id, source, target, relation: 'influence', sign: relation, inheritance: { mode: 'none' }, ruleText: '' });
+  // is-a 仍由父概念字段写入；part-of 是独立的“局部 → 整体”结构连线。
+  rules.rules.push(relationName === 'part-of'
+    ? { id, source, target, relation: 'part-of' }
+    : { id, source, target, relation: 'influence', sign: relation, inheritance: { mode: 'none' }, ruleText: '' });
   const mechanic = clone(draft);
   for (const nodeId of [source, target]) if (!mechanic.focusNodeIds.includes(nodeId)) mechanic.focusNodeIds.push(nodeId);
   if (!mechanic.pinnedRuleIds.includes(id)) mechanic.pinnedRuleIds.push(id);
@@ -2293,13 +2300,13 @@ $('toggle-inspector').onclick = () => {
 $('diagnostics').onclick = () => { selection = { type: 'diagnostics' }; inspect(); };
 $('dismiss-error').onclick = () => { $('error').hidden = true; };
 $('close-dialog').onclick = $('cancel-dialog').onclick = () => $('dialog').close('cancel');
-for (const [mode, relation] of [['positive', 1], ['negative', -1], ['random', 'random']]) {
+for (const [mode, relation] of [['positive', 1], ['negative', -1], ['random', 'random'], ['part-of', 'part-of']]) {
   const control = $(mode + '-tool');
   control.onclick = () => selectRelation(relation);
   control.onkeydown = event => {
     if (!['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown', ' ', 'Enter'].includes(event.key)) return;
     event.preventDefault();
-    const choices = [['positive', 1], ['negative', -1], ['random', 'random']];
+    const choices = [['positive', 1], ['negative', -1], ['random', 'random'], ['part-of', 'part-of']];
     const index = choices.findIndex(([key]) => key === mode);
     const target = ['ArrowLeft', 'ArrowUp'].includes(event.key) ? choices[(index + choices.length - 1) % choices.length] : ['ArrowRight', 'ArrowDown'].includes(event.key) ? choices[(index + 1) % choices.length] : [mode, relation];
     selectRelation(target[1]); $(target[0] + '-tool').focus();

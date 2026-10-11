@@ -124,7 +124,7 @@ export function compatibilityWorkspace({ manifest: rawManifest, definitions: raw
     error.schemaVersion = version; error.workspaceId = rawManifest.id;
     throw error;
   }
-  if (rawManifest.schemaVersion === 14) {
+  if (rawManifest.schemaVersion === 14 || rawManifest.schemaVersion === 15) {
     assertDocument(rawManifest, 'workspace'); assertDocument(rawDefinitions, 'definitions'); assertDocument(rawRules, 'rules');
     rawMechanics.forEach(item => assertDocument(item.document, 'mechanic', item.path));
     rawViews.forEach(item => assertDocument(item.document, 'view', item.path));

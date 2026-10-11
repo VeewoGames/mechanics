@@ -130,7 +130,7 @@ test.skip('已删除：预检允许 v10 工作区，并以兼容读模型打开�
   assert.equal(JSON.parse(await readFile(join(root, '.mechanics', 'workspace.json'), 'utf8')).schemaVersion, 10);
 });
 
-test('坏机制图不会阻断网页预检和项目打开', async t => {
+test('旧协议含坏机制图时自动迁移明确失败', async t => {
   const root = await mkdtemp(join(tmpdir(), 'mechanics-degraded-project-'));
   await copyExampleFixture(root);
   const workspaceRoot = join(root, '.mechanics'), workspace = await readWorkspace(workspaceRoot);
@@ -140,9 +140,9 @@ test('坏机制图不会阻断网页预检和项目打开', async t => {
   const server = await startServer({ port: 0, projectHistoryPath: join(root, 'user', 'projects.json') });
   t.after(async () => { await server.close(); await rm(root, { recursive: true, force: true }); });
   const opened = await post(server.origin, '/api/project/open', { projectRoot: root });
-  assert.equal(opened.response.status, 200, JSON.stringify(opened.data));
-  assert.equal(opened.data.workspaceState, 'degraded');
-  assert.ok(opened.data.resourceDiagnostics.some(item => item.path.endsWith('hand.mechanic.json') && /player-damage/.test(item.message)));
+  assert.equal(opened.response.status, 422, JSON.stringify(opened.data));
+  assert.equal(opened.data.error, 'MIGRATION_VALIDATION_FAILED');
+  assert.match(opened.data.message, /player-damage/);
 });
 
 test('项目仅在成功激活后进入最近记录，并支持置顶、取消置顶和移除', async t => {

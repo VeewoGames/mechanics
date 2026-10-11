@@ -3102,6 +3102,7 @@ var require_utils = __commonJS({
     "use strict";
     var isUUID = RegExp.prototype.test.bind(/^[\da-f]{8}-[\da-f]{4}-[\da-f]{4}-[\da-f]{4}-[\da-f]{12}$/iu);
     var isIPv4 = RegExp.prototype.test.bind(/^(?:(?:25[0-5]|2[0-4]\d|1\d{2}|[1-9]\d|\d)\.){3}(?:25[0-5]|2[0-4]\d|1\d{2}|[1-9]\d|\d)$/u);
+    var isPort = RegExp.prototype.test.bind(/^\d*$/u);
     var isHexPair = RegExp.prototype.test.bind(/^[\da-f]{2}$/iu);
     var isUnreserved = RegExp.prototype.test.bind(/^[\da-z\-._~]$/iu);
     var isPathCharacter = RegExp.prototype.test.bind(/^[A-Za-z0-9\-._~!$&'()*+,;=:@/]$/u);
@@ -3567,8 +3568,12 @@ var require_utils = __commonJS({
         uriTokens.push(host);
       }
       if (typeof component.port === "number" || typeof component.port === "string") {
+        const port = String(component.port);
+        if (!isPort(port)) {
+          throw new TypeError("URI port is malformed.");
+        }
         uriTokens.push(":");
-        uriTokens.push(String(component.port));
+        uriTokens.push(port);
       }
       return uriTokens.length ? uriTokens.join("") : void 0;
     }
@@ -4011,12 +4016,15 @@ var require_fast_uri = __commonJS({
       }
       return false;
     }
+    function isIPLiteral(host) {
+      return host[0] === "[" && host[host.length - 1] === "]";
+    }
     function hasMalformedComponentPercentEncoding(matches) {
       const host = matches[4];
-      return hasMalformedPercentEncoding(matches[3]) || host !== void 0 && !(host[0] === "[" && host[host.length - 1] === "]") && hasMalformedPercentEncoding(host) || hasMalformedPercentEncoding(matches[6]) || hasMalformedPercentEncoding(matches[7]) || hasMalformedPercentEncoding(matches[8]);
+      return hasMalformedPercentEncoding(matches[3]) || host !== void 0 && !isIPLiteral(host) && hasMalformedPercentEncoding(host) || hasMalformedPercentEncoding(matches[6]) || hasMalformedPercentEncoding(matches[7]) || hasMalformedPercentEncoding(matches[8]);
     }
     function canonicalizeHost(parsed, options, schemeHandler, isIP) {
-      if (!options.unicodeSupport && (!schemeHandler || !schemeHandler.unicodeSupport) && parsed.host && parsed.host[0] !== "[" && (options.domainHost || schemeHandler && schemeHandler.domainHost) && isIP === false && nonSimpleDomain(parsed.host)) {
+      if (!options.unicodeSupport && (!schemeHandler || !schemeHandler.unicodeSupport) && parsed.host && !isIPLiteral(parsed.host) && (options.domainHost || schemeHandler && schemeHandler.domainHost) && isIP === false && nonSimpleDomain(parsed.host)) {
         try {
           parsed.host = new URL("http://" + parsed.host).hostname;
         } catch (e) {
@@ -4103,10 +4111,11 @@ var require_fast_uri = __commonJS({
         if (parsed.host) {
           const ipv4result = isIPv4(parsed.host);
           if (ipv4result === false) {
-            const bracketedIPLiteral = parsed.host[0] === "[" && parsed.host[parsed.host.length - 1] === "]";
+            const bracketedIPLiteral = isIPLiteral(parsed.host);
+            const hasIPLiteralBracket = parsed.host.indexOf("[") !== -1 || parsed.host.indexOf("]") !== -1;
             const ipv6result = normalizeIPv6(parsed.host);
             isIP = ipv6result.isIPV6 || ipv6result.isIPVFuture === true;
-            malformedIPLiteral = bracketedIPLiteral && ipv6result.error === true;
+            malformedIPLiteral = hasIPLiteralBracket && (!bracketedIPLiteral || ipv6result.error === true);
             parsed.host = isIP ? ipv6result.host : ipv6result.host.toLowerCase();
             if (malformedIPLiteral) {
               parsed.error = parsed.error || "URI host is malformed.";
@@ -4129,14 +4138,17 @@ var require_fast_uri = __commonJS({
           parsed.error = parsed.error || "URI is not a " + options.reference + " reference.";
         }
         const schemeHandler = getSchemeHandler(options.scheme || parsed.scheme);
-        malformedHost = canonicalizeHost(parsed, options, schemeHandler, isIP);
-        if (!schemeHandler || schemeHandler && !schemeHandler.skipNormalize) {
-          if (uri.indexOf("%") !== -1) {
-            if (parsed.host !== void 0 && !malformedIPLiteral) {
-              const host = isIP ? parsed.host : normalizePercentEncoding(parsed.host, true);
-              parsed.host = reescapeHostDelimiters(host, isIP);
-            }
+        if (!malformedIPLiteral) {
+          malformedHost = canonicalizeHost(parsed, options, schemeHandler, isIP);
+        }
+        if (uri.indexOf("%") !== -1 && parsed.host !== void 0 && !malformedIPLiteral) {
+          let host = isIP ? parsed.host : normalizePercentEncoding(parsed.host, true);
+          if (!isIP) {
+            host = normalizePercentEncoding(host.toLowerCase());
           }
+          parsed.host = reescapeHostDelimiters(host, isIP);
+        }
+        if (!schemeHandler || schemeHandler && !schemeHandler.skipNormalize) {
           if (parsed.path) {
             parsed.path = normalizePathEncoding(parsed.path);
           }
@@ -6889,12 +6901,18 @@ function assertSemanticId(id, location = "ID") {
   if (problem) throw new Error(`${location}${problem}：${String(id)}`);
   return id;
 }
-function semanticRuleId(source, target, used = /* @__PURE__ */ new Set()) {
+function semanticRuleId(source, target, relationOrUsed = null, maybeUsed = /* @__PURE__ */ new Set()) {
   assertSemanticId(source, "规则源概念 ID ");
   assertSemanticId(target, "规则目标概念 ID ");
-  const base = `${source}-2-${target}`;
+  const legacy = relationOrUsed instanceof Set || relationOrUsed === null || relationOrUsed === void 0;
+  const relation = legacy ? null : relationOrUsed;
+  const used = relationOrUsed instanceof Set ? relationOrUsed : maybeUsed;
+  if (relation !== null && !["influence", "specializes", "part-of"].includes(relation)) {
+    throw new Error(`未知规则关系：${String(relation)}`);
+  }
+  const base = relation === null ? `${source}-2-${target}` : `${source}-2-${target}-${relation}`;
   if (!used.has(base)) return base;
-  throw new Error(`概念 ${source} 到 ${target} 已有规则。`);
+  throw new Error(`概念 ${source} 到 ${target} 已有 ${relation ?? "旧协议"} 规则。`);
 }
 
 // src/domain/graph.mjs
@@ -6935,6 +6953,33 @@ function assertSpecializes(edges) {
   }
   for (const node of adjacent.keys()) visit(node);
 }
+function assertPartOf(edges) {
+  const relations = edges.filter((edge) => edge.relation === "part-of");
+  const adjacent = /* @__PURE__ */ new Map();
+  for (const edge of relations) {
+    if (edge.source === edge.target) {
+      const error = new Error(`part-of 关系不能连接自身：[${edge.id}]`);
+      error.code = "PART_OF_SELF_LINK";
+      throw error;
+    }
+    if (!adjacent.has(edge.source)) adjacent.set(edge.source, []);
+    adjacent.get(edge.source).push(edge.target);
+  }
+  const visiting = /* @__PURE__ */ new Set(), visited = /* @__PURE__ */ new Set();
+  function visit(node) {
+    if (visiting.has(node)) {
+      const error = new Error(`part-of 关系形成组成环：${[...visiting, node].join(" → ")}`);
+      error.code = "PART_OF_CYCLE";
+      throw error;
+    }
+    if (visited.has(node)) return;
+    visiting.add(node);
+    for (const target of adjacent.get(node) ?? []) visit(target);
+    visiting.delete(node);
+    visited.add(node);
+  }
+  for (const node of adjacent.keys()) visit(node);
+}
 
 // src/domain/view.mjs
 var registeredMechanicIds = (view) => view.mechanicRegistrations.map((item) => item.mechanicId);
@@ -6943,8 +6988,8 @@ var visibleMechanicIds = (view) => view.mechanicRegistrations.filter((item) => i
 // schemas/protocol.schema.json
 var protocol_schema_default = {
   $schema: "http://json-schema.org/draft-07/schema#",
-  $id: "urn:mechanics-tools:protocol:13",
-  title: "Mechanics 工作区 v13、机制 v8、定义 v7、规则库 v1、视图 v5",
+  $id: "urn:mechanics-tools:protocol:15",
+  title: "Mechanics 工作区 v15、机制 v9、定义 v7、规则库 v2、视图 v5",
   oneOf: [
     {
       $ref: "#/definitions/workspace"
@@ -7184,7 +7229,8 @@ var protocol_schema_default = {
       properties: {
         schemaVersion: {
           enum: [
-            14
+            14,
+            15
           ]
         },
         kind: {
@@ -7623,7 +7669,7 @@ var protocol_schema_default = {
       additionalProperties: false,
       required: ["schemaVersion", "kind", "workspaceId", "rules"],
       properties: {
-        schemaVersion: { const: 1 },
+        schemaVersion: { enum: [1, 2] },
         kind: { const: "rules" },
         workspaceId: { $ref: "#/definitions/id" },
         rules: { type: "array", items: { $ref: "#/definitions/edge" } },
@@ -7723,7 +7769,8 @@ var protocol_schema_default = {
         relation: {
           enum: [
             "influence",
-            "specializes"
+            "specializes",
+            "part-of"
           ]
         },
         sign: {
@@ -7757,35 +7804,35 @@ var protocol_schema_default = {
           ]
         },
         {
-          properties: {
-            relation: {
-              const: "specializes"
-            }
-          },
-          not: {
-            anyOf: [
-              {
-                required: [
-                  "sign"
-                ]
-              },
-              {
-                required: [
-                  "inheritance"
-                ]
-              },
-              {
-                required: [
-                  "sourceQualifiers"
-                ]
-              },
-              {
-                required: [
-                  "targetQualifiers"
+          allOf: [
+            { properties: { relation: { const: "specializes" } } },
+            {
+              not: {
+                anyOf: [
+                  { required: ["sign"] },
+                  { required: ["inheritance"] },
+                  { required: ["sourceQualifiers"] },
+                  { required: ["targetQualifiers"] }
                 ]
               }
-            ]
-          }
+            }
+          ]
+        },
+        {
+          allOf: [
+            { properties: { relation: { const: "part-of" } } },
+            {
+              not: {
+                anyOf: [
+                  { required: ["sign"] },
+                  { required: ["inheritance"] },
+                  { required: ["sourceQualifiers"] },
+                  { required: ["targetQualifiers"] }
+                ]
+              }
+            },
+            { not: { required: ["ruleText"] } }
+          ]
         }
       ]
     },
@@ -7961,30 +8008,49 @@ function validateWorkspace({ manifest, definitions, rules, mechanics, views = []
     }
   }
   const graphIds = unique(mechanics, "机制图清单");
-  const workspaceEndpointPairs = /* @__PURE__ */ new Map();
+  const workspaceRelationKeys = /* @__PURE__ */ new Map(), legacyEndpointKeys = /* @__PURE__ */ new Map(), structuralPairs = /* @__PURE__ */ new Map();
   for (const [ruleIndex, edge] of rules.rules.entries()) {
-    if (edge.relation === "specializes" && (edge.sourceQualifiers || edge.targetQualifiers)) {
-      throw new ContractError("QUALIFIER_ON_SPECIALIZES", `is-a 只能连接概念分类，不能限定规则参与者：${edge.id}`);
+    if (edge.relation !== "influence" && (edge.sourceQualifiers || edge.targetQualifiers)) {
+      throw new ContractError("QUALIFIER_ON_STRUCTURAL_RELATION", `结构关系不能限定规则参与者：${edge.id}`);
+    }
+    if (rules.schemaVersion === 1 && edge.relation === "part-of") {
+      throw new ContractError("RELATION_REQUIRES_RULES_V2", `part-of 只允许写入 rules v2：${edge.id}`);
     }
     validateRuleQualifiers(edge.sourceQualifiers, nodes, `${edge.id}.source`);
     validateRuleQualifiers(edge.targetQualifiers, nodes, `${edge.id}.target`);
-    const pair = `${edge.source}\0${edge.target}`;
-    if (workspaceEndpointPairs.has(pair)) throw new ContractError(
+    const endpointKey = [edge.source, edge.target].join("\0");
+    if (rules.schemaVersion === 1 && legacyEndpointKeys.has(endpointKey)) throw new ContractError(
       "DUPLICATE_ENDPOINT_RULE",
-      `概念 ${edge.source} 到 ${edge.target} 已在规则 ${workspaceEndpointPairs.get(pair)} 中存在；全工作区同一有向端点对只允许一条规则`
+      `概念 ${edge.source} 到 ${edge.target} 已在规则 ${legacyEndpointKeys.get(endpointKey)} 中存在`
     );
-    workspaceEndpointPairs.set(pair, edge.id);
+    legacyEndpointKeys.set(endpointKey, edge.id);
+    const relationKey = [edge.source, edge.target, edge.relation].join("\0");
+    if (workspaceRelationKeys.has(relationKey)) throw new ContractError(
+      rules.schemaVersion === 1 ? "DUPLICATE_ENDPOINT_RULE" : "DUPLICATE_ENDPOINT_RELATION",
+      `概念 ${edge.source} 到 ${edge.target} 的 ${edge.relation} 已在规则 ${workspaceRelationKeys.get(relationKey)} 中存在`
+    );
+    workspaceRelationKeys.set(relationKey, edge.id);
+    if (edge.relation === "specializes" || edge.relation === "part-of") {
+      const pair = [edge.source, edge.target].join("\0"), existing = structuralPairs.get(pair);
+      if (existing && existing.relation !== edge.relation) throw new ContractError(
+        "STRUCTURAL_RELATION_CONFLICT",
+        `概念 ${edge.source} 到 ${edge.target} 不能同时声明 specializes 与 part-of`,
+        { firstRuleId: existing.id, secondRuleId: edge.id }
+      );
+      structuralPairs.set(pair, edge);
+    }
     requireReference(nodes, edge.source, manifest.rules, `rules[${ruleIndex}].source`);
     requireReference(nodes, edge.target, manifest.rules, `rules[${ruleIndex}].target`);
-    const expectedId = semanticRuleId(edge.source, edge.target, /* @__PURE__ */ new Set());
+    const expectedId = rules.schemaVersion === 2 ? semanticRuleId(edge.source, edge.target, edge.relation, /* @__PURE__ */ new Set()) : semanticRuleId(edge.source, edge.target, /* @__PURE__ */ new Set());
     if (edge.id !== expectedId) throw new ContractError(
       "RULE_ID_MISMATCH",
-      `规则 ID 必须由端点确定：${edge.id} 应为 ${expectedId}`
+      `规则 ID 必须由端点和关系确定：${edge.id} 应为 ${expectedId}`
     );
   }
   unique(rules.rules, "规则库");
   try {
     assertSpecializes(rules.rules);
+    assertPartOf(rules.rules);
   } catch (error) {
     error.details = { resource: manifest.rules, field: "rules", ...error.details };
     throw error;
@@ -8458,19 +8524,20 @@ async function snapshot({ validate = true, includeViews = true } = {}) {
   if (validate) validateWorkspace(candidateOf(data), { validateResourceReferences: includeViews });
   return data;
 }
-var operator = (edge) => edge.relation === "specializes" ? "is-a>" : edge.sign === 1 ? "+>" : edge.sign === -1 ? "->" : "?>";
+var operator = (edge) => edge.relation === "specializes" ? "is-a>" : edge.relation === "part-of" ? "part-of>" : edge.sign === 1 ? "+>" : edge.sign === -1 ? "->" : "?>";
 var guide = () => ({
-  contractVersion: 7,
+  contractVersion: 8,
   commands: ["scopes", "search", "graph", "node", "impact", "draft open", "draft validate", "draft save", "isa set"],
   workflow: ["draft open（已知 ID 直接打开；新图携带名称与范围）", "定向编辑三份草稿的相关内容，保留无关事实", "draft save（自动校验与回读确认）"],
   optional: { guide: "首次需要字段合同时读取", scopes: "仅定位未知目标或目录", validate: "可选不保存 dry-run；不作为 save 前置" },
   conceptTemplate: { id: "stable-concept-id", label: "概念名称", description: "概念定义。", tagIds: ["existing-tag-id"], agentLocked: false },
-  influenceRuleTemplate: { id: "source-concept-2-target-concept", source: "source-concept", target: "target-concept", relation: "influence", sign: 1, inheritance: { mode: "none" }, ruleText: "源概念如何影响目标概念。" },
-  specializesRuleTemplate: { id: "subtype-concept-2-supertype-concept", source: "subtype-concept", target: "supertype-concept", relation: "specializes" },
+  influenceRuleTemplate: { id: "source-concept-2-target-concept-influence", source: "source-concept", target: "target-concept", relation: "influence", sign: 1, inheritance: { mode: "none" }, ruleText: "源概念如何影响目标概念。" },
+  specializesRuleTemplate: { id: "subtype-concept-2-supertype-concept-specializes", source: "subtype-concept", target: "supertype-concept", relation: "specializes" },
+  partOfRuleTemplate: { id: "part-concept-2-whole-concept-part-of", source: "part-concept", target: "whole-concept", relation: "part-of" },
   exportMaintenance: { createdMechanic: "新建机制图默认进入单独导出：curated 模式补一条独立选择，机制图所在的直接文件夹已选中则不补，视图永不自动进入导出清单", documents: "工具只维护导出清单；文档本身仍需显式生成（网页或 CLI）", failure: "workspace.json 基线不符报 RESOURCE_REVISION_CONFLICT；写入或回读失败报 MIGRATION_WRITE_FAILED，并以 commitState/rollbackComplete/recovery 区分已回滚与结果待确认；已提交后的清理问题返回 saved:true 与 warnings，不能重提" },
   implementationStatus: { field: "implementationStatus", allowedValues: ["design", "implemented"], newMechanic: "design", rule: "只有作者确认已在实际游戏中实现时才手动标 implemented；旧机制迁移一律 design" },
   mechanicSelection: { optionalField: "ruleSelection", allowedValue: "explicit", whenOmitted: "按 focusNodeIds 展开一跳规则并合入 pinnedRuleIds", whenExplicit: "节点保留 focusNodeIds 与固定规则端点；只投影 pinnedRuleIds 的规则，不展开相邻规则" },
-  constraints: ["is-a 每个概念至多一个父概念，用 isa set 更换或清除；不要手写第二条 specializes 出边", "概念标签只引用 definitions.tagDefinitions 中已存在的 tagIds；显示名和颜色只在标签表维护", "所有持久化 ID 使用英文小写 kebab-case", "规则只存于 rules.json，ID 固定为 source-2-target", "同一有向端点对在全工作区只能有一条规则", "mechanic 用 focusNodeIds 与 pinnedRuleIds 选择投影；省略 ruleSelection 时展开焦点邻接规则，explicit 时只投影固定规则与焦点节点", "限定词只属于 influence 规则端点", "node 的 upstream 只表示发现上游的遍历方向；paths 中的 nodes、steps、chain 与 effect 始终按规则声明的 source → target 方向返回", "草稿不允许 positions、projectionPositions 或 routeCache", "save 自动检查完整候选并回读确认；validate 仅可选 dry-run；不执行自动排版或文档导出", "search --query 先精确解析，只有精确未命中才返回 resolution.status 为 fuzzy 的模糊候选（label、alias、id、description），候选只是线索，必须用其中的稳定 ID 再查一次，工具不会自动消歧", "graph --ids 只投影请求集合内部已声明的规则；集合外端点、路径推导、视图、坐标与配色都不进入结果"]
+  constraints: ["is-a 每个概念至多一个父概念，用 isa set 更换或清除；不要手写第二条 specializes 出边", "概念标签只引用 definitions.tagDefinitions 中已存在的 tagIds；显示名和颜色只在标签表维护", "所有持久化 ID 使用英文小写 kebab-case", "规则只存于 rules.json，rules v2 的 ID 固定为 source-2-target-relation", "同一有向端点与同一 relation 在全工作区只能有一条规则；influence 可与一种结构关系同端点共存", "part-of 方向是局部到整体，允许多整体，禁止自连和环；不携带符号、继承、限定词或规则文字，也不参与 impact", "mechanic 用 focusNodeIds 与 pinnedRuleIds 选择投影；省略 ruleSelection 时展开焦点邻接规则，explicit 时只投影固定规则与焦点节点", "限定词只属于 influence 规则端点", "node 的 upstream 只表示发现上游的遍历方向；paths 中的 nodes、steps、chain 与 effect 始终按规则声明的 source → target 方向返回", "草稿不允许 positions、projectionPositions 或 routeCache", "save 自动检查完整候选并回读确认；validate 仅可选 dry-run；不执行自动排版或文档导出", "search --query 先精确解析，只有精确未命中才返回 resolution.status 为 fuzzy 的模糊候选（label、alias、id、description），候选只是线索，必须用其中的稳定 ID 再查一次，工具不会自动消歧", "graph --ids 只投影请求集合内部已声明的规则；集合外端点、路径推导、视图、坐标与配色都不进入结果"]
 });
 var semanticId = (value) => typeof value === "string" && /^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$/u.test(value);
 var text = (value, field) => {
@@ -8563,10 +8630,10 @@ function compact(path, map) {
   if (path.ids.length !== steps.length + 1 || steps.some((step, index) => step.from !== path.ids[index] || step.to !== path.ids[index + 1])) {
     fail("QUERY_PATH_DIRECTION_INVALID", "查询路径的节点顺序必须与规则声明方向一致");
   }
-  const taxonomy = path.steps.some((edge) => edge.relation === "specializes");
+  const relations = new Set(path.steps.map((edge) => edge.relation));
   let sign = 1;
   for (const edge of path.steps) if (edge.relation === "influence") sign = sign === "random" || edge.sign === "random" ? "random" : sign * edge.sign;
-  return { length: steps.length, nodes: path.ids.map((id) => ({ id, label: map.get(id)?.label ?? id })), steps, chain: path.ids.map((id, i) => i ? `${steps[i - 1].operator} ${id}` : id).join(" "), kind: taxonomy ? path.steps.every((edge) => edge.relation === "specializes") ? "taxonomy" : "mixed" : "influence", effect: taxonomy ? null : sign === 1 ? "positive" : sign === -1 ? "negative" : "random" };
+  return { length: steps.length, nodes: path.ids.map((id) => ({ id, label: map.get(id)?.label ?? id })), steps, chain: path.ids.map((id, i) => i ? `${steps[i - 1].operator} ${id}` : id).join(" "), kind: relations.size > 1 ? "mixed" : relations.has("specializes") ? "taxonomy" : relations.has("part-of") ? "composition" : "influence", effect: relations.has("influence") && relations.size === 1 ? sign === 1 ? "positive" : sign === -1 ? "negative" : "random" : null };
 }
 async function withLock(fn) {
   const release = await acquireWorkspaceLock(workspace);
@@ -8626,7 +8693,7 @@ async function openDraft(mechanicId, options) {
   await writeFile(definitionsPath, JSON.stringify(structuralCopy(data.definitions.value), null, 2) + "\n");
   await writeFile(rulesPath, JSON.stringify(structuralCopy(data.rules.value), null, 2) + "\n");
   await writeFile(mechanicPath, JSON.stringify(structuralCopy(document), null, 2) + "\n");
-  const { conceptTemplate, influenceRuleTemplate, specializesRuleTemplate, mechanicSelection } = guide();
+  const { conceptTemplate, influenceRuleTemplate, specializesRuleTemplate, partOfRuleTemplate, mechanicSelection } = guide();
   const meta = {
     id,
     workspaceId: data.manifest.value.id,
@@ -8645,7 +8712,7 @@ async function openDraft(mechanicId, options) {
   return {
     contractVersion: 7,
     next: "编辑相关内容后 draft save；validate 仅可选 dry-run",
-    contract: { conceptTemplate, influenceRuleTemplate, specializesRuleTemplate, mechanicSelection, fullLibraryDrafts: true, preserveUnrelatedEntries: true, agentLocks: "不可更改锁标记、修改或删除锁定概念", validation: "脚本校验全部机制与视图引用，无需人工全量通读", sequentialMechanics: true },
+    contract: { conceptTemplate, influenceRuleTemplate, specializesRuleTemplate, partOfRuleTemplate, mechanicSelection, fullLibraryDrafts: true, preserveUnrelatedEntries: true, agentLocks: "不可更改锁标记、修改或删除锁定概念", validation: "脚本校验全部机制与视图引用，无需人工全量通读", sequentialMechanics: true },
     targetFile: meta.targetFile,
     mechanicId,
     draftId: id,
@@ -8678,7 +8745,7 @@ async function setIsaParent(draftId2, conceptId, parentOption) {
   const rules = structuredClone(draftRules.value), mechanic = structuredClone(draftMechanic.value);
   const previous = rules.rules.find((rule) => rule.relation === "specializes" && rule.source === conceptId) ?? null;
   if ((previous?.target ?? null) === parentId) return { draftId: draftId2, concept: conceptId, parent: parentId, changed: false, path: join(folder2, "rules.json") };
-  const nextId = parentId === null ? null : `${conceptId}-2-${parentId}`;
+  const nextId = parentId === null ? null : rules.schemaVersion >= 2 ? `${conceptId}-2-${parentId}-specializes` : `${conceptId}-2-${parentId}`;
   if (nextId && rules.rules.some((rule) => rule.id === nextId)) fail("DRAFT_VALIDATION_FAILED", `概念 ${conceptId} 到 ${parentId} 已有其它规则，不能同时作为 is-a`);
   rules.rules = rules.rules.filter((rule) => !(rule.relation === "specializes" && rule.source === conceptId));
   if (nextId) rules.rules.push({ id: nextId, source: conceptId, target: parentId, relation: "specializes" });
@@ -8837,7 +8904,7 @@ async function main() {
   }
   if (command === "impact") {
     if (!options.from || !options.to || !data.nodeMap.has(options.from) || !data.nodeMap.has(options.to)) fail("NODE_NOT_FOUND", "impact 需要已有 --from 与 --to");
-    const result = paths(data.edges, options.from, options.to, Number(options["max-depth"] ?? 16)).map((path) => compact(path, data.nodeMap));
+    const result = paths(data.edges.filter((edge) => edge.relation === "influence"), options.from, options.to, Number(options["max-depth"] ?? 16)).map((path) => compact(path, data.nodeMap));
     return { revision: data.revision, counts: { returned: result.length }, paths: result };
   }
   if (command === "node") {

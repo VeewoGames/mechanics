@@ -195,6 +195,7 @@ function rulesMarkdown(mechanic, catalog) {
   const concept = id => catalog.dossiers.get(id).concept;
   const impliedRule = edge => {
     if (edge.relation === 'specializes') return `未填写规则说明；${inlineText(concept(edge.source).label)}属于${inlineText(concept(edge.target).label)}。`;
+    if (edge.relation === 'part-of') return `${inlineText(concept(edge.source).label)}是${inlineText(concept(edge.target).label)}的直接组成部分。`;
     if (edge.sign === 1) return '未填写规则说明；该连线表示源概念增加会使目标概念增加。';
     if (edge.sign === -1) return '未填写规则说明；该连线表示源概念增加会使目标概念减少。';
     return '未填写规则说明；该连线表示目标可能增加或减少。';
@@ -206,6 +207,7 @@ function rulesMarkdown(mechanic, catalog) {
   };
   return [...mechanic.edges].sort((a, b) => a.id.localeCompare(b.id)).map(edge => {
     if (edge.relation === 'specializes') return `- ${inlineText(concept(edge.source).label)} 属于 ${inlineText(concept(edge.target).label)}`;
+    if (edge.relation === 'part-of') return `- ${inlineText(concept(edge.source).label)} 是 ${inlineText(concept(edge.target).label)} 的直接组成部分`;
     const source = scopedLabel(edge.source, edge.sourceQualifiers);
     const target = scopedLabel(edge.target, edge.targetQualifiers);
     const rule = edge.ruleText?.trim() ? inlineText(edge.ruleText) : impliedRule(edge);

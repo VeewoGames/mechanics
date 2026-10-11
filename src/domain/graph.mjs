@@ -30,6 +30,7 @@ export function composeProjection(workspace, { graphIds: selectedIds = [], focus
   };
   assertReadGraphIntegrity(result, '合成投影');
   assertSpecializes(result.edges);
+  assertPartOf(result.edges);
   return result;
 }
 
@@ -39,7 +40,7 @@ export function compose(workspace, selectedIds) {
 
 // 单父 is-a 的唯一写入口：先删掉该概念的全部 specializes 出边，再按需写入新父概念。
 // 纯函数，返回新数组；调用方必须在同一次校验里用 assertSpecializes 复核（自连与环都会被拒绝）。
-export function setSpecializesParent(rules, childId, parentId = null) {
+export function setSpecializesParent(rules, childId, parentId = null, { schemaVersion = 1 } = {}) {
   const belongsToChild = rule => rule.relation === 'specializes' && rule.source === childId;
   if (parentId === childId) {
     const error = new Error(`概念 ${childId} 不能成为自己的 is-a 父概念`);
@@ -52,7 +53,9 @@ export function setSpecializesParent(rules, childId, parentId = null) {
   if (current?.target === parentId) return rules;
   const remaining = rules.filter(rule => !belongsToChild(rule));
   let id;
-  try { id = semanticRuleId(childId, parentId, new Set(remaining.map(rule => rule.id))); }
+  try { id = schemaVersion >= 2
+    ? semanticRuleId(childId, parentId, 'specializes', new Set(remaining.map(rule => rule.id)))
+    : semanticRuleId(childId, parentId, new Set(remaining.map(rule => rule.id))); }
   catch (error) { error.code ??= 'DUPLICATE_ENDPOINT_RULE'; throw error; }
   return [...remaining, { id, source: childId, target: parentId, relation: 'specializes' }];
 }
@@ -94,6 +97,33 @@ export function assertSpecializes(edges) {
 
 // is-a 的 specializes 出边是「具体概念 → 父概念」，所以某概念**更具体**的后代要沿入边找。
 // 父概念候选必须排除自身与这些后代，否则选出的父概念会立刻形成分类环。
+// part-of 沿“局部 → 整体”声明稳定组成关系；允许多个整体，但禁止自连和有向环。
+// 它只提供结构上下文，不推导影响、继承或传递 part-of 事实。
+export function assertPartOf(edges) {
+  const relations = edges.filter(edge => edge.relation === 'part-of');
+  const adjacent = new Map();
+  for (const edge of relations) {
+    if (edge.source === edge.target) {
+      const error = new Error(`part-of 关系不能连接自身：[${edge.id}]`);
+      error.code = 'PART_OF_SELF_LINK'; throw error;
+    }
+    if (!adjacent.has(edge.source)) adjacent.set(edge.source, []);
+    adjacent.get(edge.source).push(edge.target);
+  }
+  const visiting = new Set(), visited = new Set();
+  function visit(node) {
+    if (visiting.has(node)) {
+      const error = new Error(`part-of 关系形成组成环：${[...visiting, node].join(" → ")}`);
+      error.code = 'PART_OF_CYCLE'; throw error;
+    }
+    if (visited.has(node)) return;
+    visiting.add(node);
+    for (const target of adjacent.get(node) ?? []) visit(target);
+    visiting.delete(node); visited.add(node);
+  }
+  for (const node of adjacent.keys()) visit(node);
+}
+
 export function specializesDescendants(rules, conceptId) {
   const parents = rules.filter(rule => rule.relation === 'specializes');
   const result = new Set(), queue = [conceptId];
@@ -137,7 +167,7 @@ function hasPath(graph, from, to) {
 export function canCollapse(graph, nodeId) {
   const incoming = graph.edges.filter(edge => edge.target === nodeId);
   const outgoing = graph.edges.filter(edge => edge.source === nodeId);
-  if ([...incoming, ...outgoing].some(edge => edge.relation === 'specializes')) return false;
+  if ([...incoming, ...outgoing].some(edge => edge.relation !== 'influence')) return false;
   if (incoming.length !== 1 || outgoing.length !== 1) return false;
   // 不能把环中的节点缩成一条似乎独立成立的影响路径。
   return !hasPath(graph, outgoing[0].target, incoming[0].source);
@@ -166,6 +196,7 @@ export function collapse(graph, nodeId) {
 
 export function tracePaths(graph, source, target, { maxPaths = 50, maxDepth = 16, maxExpansions = 10000 } = {}) {
   assertSpecializes(graph.edges);
+  assertPartOf(graph.edges);
   if (!Number.isInteger(maxPaths) || maxPaths < 1 || !Number.isInteger(maxDepth) || maxDepth < 1) throw new Error('路径数量和深度上限必须是正整数');
   const ids = new Set(graph.nodes.map(node => node.id));
   if (!ids.has(source) || !ids.has(target)) throw new Error('查询端点不在当前组合中');

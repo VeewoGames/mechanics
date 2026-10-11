@@ -14,13 +14,13 @@ export async function writeExclusive(path, text) {
   try { await handle.writeFile(text, 'utf8'); await handle.sync(); }
   finally { await handle.close(); }
 }
-async function replaceWithRetry(from, to) {
-  // Windows 可能在关闭文件句柄后的极短时间内仍拒绝替换；仅重试该类瞬时占用，最终错误仍完整暴露。
-  for (let attempt = 0; ; attempt++) {
+export async function renameWithRetry(from, to) {
+  // Windows 可能在关闭文件或目录句柄后的短时间内仍拒绝改名；只重试明确的瞬时占用，最终错误原样暴露。
+  for (let attempt = 1; ; attempt++) {
     try { await rename(from, to); return; }
     catch (error) {
-      if (!['EPERM', 'EACCES', 'EBUSY'].includes(error.code) || attempt >= 4) throw error;
-      await new Promise(resolve => setTimeout(resolve, 20 * (attempt + 1)));
+      if (!['EPERM', 'EACCES', 'EBUSY'].includes(error.code) || attempt >= 8) throw error;
+      await new Promise(resolve => setTimeout(resolve, 50 * attempt));
     }
   }
 }
@@ -32,7 +32,7 @@ export async function commitFile(root, file, text, { create = false, extensions 
     await writeExclusive(temp, text);
     await workspacePath(root, file, { allowMissing: create, extensions });
     // 新建用硬链接发布完整临时文件，原子拒绝同名目标；不先删除或覆盖。
-    if (create) await link(temp, path); else await replaceWithRetry(temp, path);
+    if (create) await link(temp, path); else await renameWithRetry(temp, path);
     committed = true;
     if (create) await unlink(temp);
     if (await readFile(path, 'utf8') !== text) throw new Error('回读内容不一致');

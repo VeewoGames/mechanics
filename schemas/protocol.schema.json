@@ -1,7 +1,7 @@
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
-  "$id": "urn:mechanics-tools:protocol:13",
-  "title": "Mechanics 工作区 v13、机制 v8、定义 v7、规则库 v1、视图 v5",
+  "$id": "urn:mechanics-tools:protocol:15",
+  "title": "Mechanics 工作区 v15、机制 v9、定义 v7、规则库 v2、视图 v5",
   "oneOf": [
     {
       "$ref": "#/definitions/workspace"
@@ -241,7 +241,8 @@
       "properties": {
         "schemaVersion": {
           "enum": [
-            14
+            14,
+            15
           ]
         },
         "kind": {
@@ -679,7 +680,7 @@
       "additionalProperties": false,
       "required": ["schemaVersion", "kind", "workspaceId", "rules"],
       "properties": {
-        "schemaVersion": { "const": 1 },
+        "schemaVersion": { "enum": [1, 2] },
         "kind": { "const": "rules" },
         "workspaceId": { "$ref": "#/definitions/id" },
         "rules": { "type": "array", "items": { "$ref": "#/definitions/edge" } },
@@ -779,7 +780,8 @@
         "relation": {
           "enum": [
             "influence",
-            "specializes"
+            "specializes",
+            "part-of"
           ]
         },
         "sign": {
@@ -813,35 +815,35 @@
           ]
         },
         {
-          "properties": {
-            "relation": {
-              "const": "specializes"
-            }
-          },
+          "allOf": [
+            { "properties": { "relation": { "const": "specializes" } } },
+            {
           "not": {
             "anyOf": [
-              {
-                "required": [
-                  "sign"
-                ]
-              },
-              {
-                "required": [
-                  "inheritance"
-                ]
-              },
-              {
-                "required": [
-                  "sourceQualifiers"
-                ]
-              },
-              {
-                "required": [
-                  "targetQualifiers"
-                ]
-              }
+              { "required": ["sign"] },
+              { "required": ["inheritance"] },
+              { "required": ["sourceQualifiers"] },
+              { "required": ["targetQualifiers"] }
             ]
           }
+        }
+          ]
+        },
+        {
+          "allOf": [
+            { "properties": { "relation": { "const": "part-of" } } },
+            {
+          "not": {
+            "anyOf": [
+              { "required": ["sign"] },
+              { "required": ["inheritance"] },
+              { "required": ["sourceQualifiers"] },
+              { "required": ["targetQualifiers"] }
+            ]
+          }
+        },
+            { "not": { "required": ["ruleText"] } }
+          ]
         }
       ]
     },

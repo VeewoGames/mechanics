@@ -23,7 +23,7 @@ game-graph agent rule set-parent --project ./my-game --mechanic <投影机制ID>
 
 Agent 查询与 mutation 的完整参数见 [Agent 查询与受约束写入](Agent查询接口.md)。is-a 只由概念的「is-a 父概念」字段承担，网页节点面板与概念对话框、`mech agent rule set-parent`、项目内 `workspace-tool.mjs isa set` 是同一条关系的三个入口；画布连线只创建影响规则。
 
-`init` 可以在已有普通项目目录内创建 `.mechanics`，也可以创建尚不存在的项目目录；同时把安装包内的 `mechanics-search`、`mechanics-modeling`、`mechanics-doc` 三个受管 skill 注册到项目 `.agents/skills/`，把 `workspace-tool.mjs` 同步到 `.mechanics/tools/`。已有 `.mechanics` 时明确拒绝，不覆盖。目标 skill 不存在时安装；文件集合与内容完全相同时视为已注册；内容不同或含过期附件时用当前安装包的完整目录整体替换（暂存目录 → 备份 → 原子改名），中断报 `PROJECT_SKILL_REGISTRATION_PARTIAL`。只有路径被普通文件或符号链接占用时才在创建工作区前返回 `PROJECT_SKILL_CONFLICT`，绝不覆盖非受管路径。工作区 ID 默认取项目目录名，目录名不符合英文语义 kebab-case 时必须显式传 `--id`。
+`init` 可以在已有普通项目目录内创建 `.mechanics`，也可以创建尚不存在的项目目录；同时把安装包内的 `mechanics-search`、`mechanics-modeling`、`mechanics-doc` 三个受管 skill 注册到项目 `.agents/skills/`，把 `workspace-tool.mjs` 同步到 `.mechanics/tools/`。已有 `.mechanics` 时明确拒绝，不覆盖。目标 skill 不存在时安装；文件集合与内容完全相同时视为已注册；内容不同或含过期附件时用当前安装包的完整目录整体替换（暂存目录 → 备份 → 原子改名），Windows 短暂文件占用导致的 `EPERM`、`EACCES` 或 `EBUSY` 会有限退避重试（最多 8 次，等待间隔递增）；重试耗尽或其他中断报 `PROJECT_SKILL_REGISTRATION_PARTIAL`。源与目标文件清单按确定性路径顺序比较，保证同步幂等。只有路径被普通文件或符号链接占用时才在创建工作区前返回 `PROJECT_SKILL_CONFLICT`，绝不覆盖非受管路径。工作区 ID 默认取项目目录名，目录名不符合英文语义 kebab-case 时必须显式传 `--id`。
 
 `web` 省略 `--project` 时以空项目状态启动，网页可以打开项目；项目缺少 `.mechanics` 时按用户提供的名称和稳定 ID 初始化。`validate/catalog/root` 省略 `--project` 时从 cwd 向上寻找最近的 `.mechanics/workspace.json`。项目切换先完整打开候选并取得锁，成功后才替换当前项目；每次切换递增 `projectGeneration`，旧页面或旧在线 mutation 写入明确返回 `PROJECT_CHANGED`。
 

@@ -1,8 +1,8 @@
-import { lstat, mkdir, readFile, readdir, rename, rm } from 'node:fs/promises';
+import { lstat, mkdir, readFile, readdir, rm } from 'node:fs/promises';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { randomUUID } from 'node:crypto';
-import { writeExclusive } from './files.mjs';
+import { renameWithRetry, writeExclusive } from './files.mjs';
 import { ContractError } from '../domain/validate.mjs';
 
 export const PROJECT_SKILL_DIRECTORY = '.agents/skills';
@@ -51,7 +51,7 @@ async function sourceSkill(name) {
     if (!info?.isFile() || info.isSymbolicLink()) fail('PROJECT_SKILL_SOURCE_INVALID', `安装包缺少文档 skill 引用：${document}`);
     files.push({ path: `references/${document.slice('docs/'.length)}`, content: await readFile(source, 'utf8') });
   }
-  return { name, files: files.sort((left, right) => left.path.localeCompare(right.path)) };
+  return { name, files: files.sort((left, right) => left.path < right.path ? -1 : left.path > right.path ? 1 : 0) };
 }
 
 async function ensureDirectory(path, label) {
@@ -68,8 +68,8 @@ async function syncProjectTools(projectRoot) {
     if (existing?.isSymbolicLink() || (existing && !existing.isFile())) fail('PROJECT_TOOL_CONFLICT', `项目工具路径已被占用：${target}`);
     if (existing && sameContent(await readFile(target, 'utf8'), content)) continue;
     const staging = resolve(toolsRoot, `.${name}.${randomUUID()}.tmp`); await writeExclusive(staging, content);
-    if (!existing) await rename(staging, target);
-    else { const backup = resolve(toolsRoot, `.${name}.${randomUUID()}.backup`); await rename(target, backup); try { await rename(staging, target); } catch (error) { await rename(backup, target); throw error; } await rm(backup, { force: true }); }
+    if (!existing) await renameWithRetry(staging, target);
+    else { const backup = resolve(toolsRoot, `.${name}.${randomUUID()}.backup`); await renameWithRetry(target, backup); try { await renameWithRetry(staging, target); } catch (error) { await renameWithRetry(backup, target); throw error; } await rm(backup, { force: true }); }
     installed.push(`${PROJECT_TOOL_DIRECTORY}/${name}`);
   }
   return installed;
@@ -101,8 +101,8 @@ export async function registerProjectSkills(projectRoot) {
     try {
       await mkdir(stagingRoot);
       for (const file of skill.files) { await mkdir(dirname(resolve(stagingRoot, file.path)), { recursive: true }); await writeExclusive(resolve(stagingRoot, file.path), file.content); }
-      if (skill.state === 'missing') await rename(stagingRoot, skill.root);
-      else { const backupRoot = resolve(plan.skillsRoot, `.${skill.name}.${randomUUID()}.backup`); await rename(skill.root, backupRoot); try { await rename(stagingRoot, skill.root); } catch (error) { await rename(backupRoot, skill.root); throw error; } await rm(backupRoot, { recursive: true, force: true }); }
+      if (skill.state === 'missing') await renameWithRetry(stagingRoot, skill.root);
+      else { const backupRoot = resolve(plan.skillsRoot, `.${skill.name}.${randomUUID()}.backup`); await renameWithRetry(skill.root, backupRoot); try { await renameWithRetry(stagingRoot, skill.root); } catch (error) { await renameWithRetry(backupRoot, skill.root); throw error; } await rm(backupRoot, { recursive: true, force: true }); }
       installed.push(`${PROJECT_SKILL_DIRECTORY}/${skill.name}/SKILL.md`);
     } catch (error) { fail('PROJECT_SKILL_REGISTRATION_PARTIAL', `项目 skill 注册未完成；已安装：${installed.join('、') || '无'}；暂存目录：${stagingRoot}；${error.message}`, { installedSkills: installed, stagingRoot }); }
   }

@@ -23,9 +23,9 @@ const fail = (code, message, cause) => { throw Object.assign(new ContractError(c
 
 // 唯一的迁移链定义：显式 migrate、migrate-project 与打开项目时的自动升级都消费这张表，
 // 避免多处各写一份而漂移。只有存在一跳的版本才可以被自动升级改写。
-export const WORKSPACE_MIGRATION_STEPS = Object.freeze({ 7: 8, 8: 9, 9: 10, 10: 12, 11: 12, 12: 13, 13: 14 });
+export const WORKSPACE_MIGRATION_STEPS = Object.freeze({ 7: 8, 8: 9, 9: 10, 10: 12, 11: 12, 12: 13, 13: 14, 14: 15 });
 export const MIGRATABLE_WORKSPACE_VERSIONS = Object.freeze(Object.keys(WORKSPACE_MIGRATION_STEPS).map(Number));
-export const CURRENT_WORKSPACE_VERSION = 14;
+export const CURRENT_WORKSPACE_VERSION = 15;
 export function workspaceMigrationPlan(from) {
   const steps = [];
   for (let version = from; WORKSPACE_MIGRATION_STEPS[version] !== undefined; version = WORKSPACE_MIGRATION_STEPS[version]) {
@@ -366,6 +366,38 @@ export async function planV13ToV14Migration(workspaceRoot) {
     { path: 'workspace.json', document: nextManifest },
     ...nextMechanics.map((document, index) => ({ path: discovered.mechanicPaths[index], document })),
   ], summary: { workspace: 1, mechanics: nextMechanics.length, views: views.length, designatedAsDesign: nextMechanics.length } };
+}
+
+export async function planV14ToV15Migration(workspaceRoot) {
+  const root = await realpath(resolve(workspaceRoot));
+  const snapshots = new Map();
+  const read = async file => { const result = await readDocument(root, file); snapshots.set(file, result.raw); return result.document; };
+  const manifest = await read('workspace.json');
+  if (manifest?.kind !== 'workspace' || manifest.schemaVersion !== 14) fail('MIGRATION_VERSION_UNSUPPORTED', '迁移只支持 workspace v14 → v15；当前工作区版本为 v' + String(manifest?.schemaVersion));
+  const definitions = await read(manifest.definitions), rules = await read(manifest.rules), discovered = await discover(root), mechanics = [], views = [];
+  for (const path of discovered.mechanicPaths) mechanics.push(await read(path));
+  for (const path of discovered.viewPaths) views.push(await read(path));
+  if (definitions?.schemaVersion !== 7 || rules?.schemaVersion !== 1 || mechanics.some(item => item?.schemaVersion !== 9) || views.some(item => item?.schemaVersion !== 5)) {
+    fail('MIGRATION_VERSION_UNSUPPORTED', '迁移只接受 definitions v7、rules v1、mechanic v9 与 view v5 的完整 v14 工作区');
+  }
+  const idMap = new Map();
+  const nextRules = { ...structuredClone(rules), schemaVersion: 2, rules: rules.rules.map(rule => {
+    const id = semanticRuleId(rule.source, rule.target, rule.relation, new Set());
+    idMap.set(rule.id, id); return { ...structuredClone(rule), id };
+  }) };
+  const remapPins = document => ({ ...structuredClone(document), pinnedRuleIds: document.pinnedRuleIds.map(id => idMap.get(id) ?? id) });
+  const nextManifest = { ...structuredClone(manifest), schemaVersion: 15 };
+  const nextMechanics = mechanics.map(remapPins), nextViews = views.map(remapPins);
+  const files = [{ kind: 'workspace', id: manifest.id, path: 'workspace.json' }, { kind: 'definitions', path: manifest.definitions }, { kind: 'rules', path: manifest.rules },
+    ...mechanics.map((item, index) => ({ kind: 'mechanic', id: item.id, path: discovered.mechanicPaths[index] })),
+    ...views.map((item, index) => ({ kind: 'view', id: item.id, path: discovered.viewPaths[index] }))];
+  try { validateWorkspace({ manifest: nextManifest, definitions, rules: nextRules, mechanics: nextMechanics, views: nextViews, files }); }
+  catch (error) { fail('MIGRATION_VALIDATION_FAILED', 'v14 → v15 候选未通过全量校验：' + error.message, error); }
+  return { root, from: 14, to: 15, revision: revisionOf(snapshots, discovered.directories), documents: [
+    { path: 'workspace.json', document: nextManifest }, { path: manifest.rules, document: nextRules },
+    ...nextMechanics.map((document, index) => ({ path: discovered.mechanicPaths[index], document })),
+    ...nextViews.map((document, index) => ({ path: discovered.viewPaths[index], document })),
+  ], summary: { workspace: 1, rules: nextRules.rules.length, mechanics: nextMechanics.length, views: nextViews.length, ruleIdsRekeyed: idMap.size } };
 }
 
 // 只修复一次已确认的跨文件半提交：definitions 已删除、机制仍保留无规则节点引用。

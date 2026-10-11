@@ -21,6 +21,25 @@ test('源项目声明参考项目，目录绑定只存本机并可供定位', as
   assert.equal(JSON.parse(await readFile(bindingsFile, 'utf8')).bindings[0].projectRoot, target);
 });
 
+
+test('共享声明在另一台机器缺少目标目录时只标记不可用，不阻断源项目', async t => {
+  const root = await mkdtemp(join(tmpdir(), 'mechanics-project-reference-missing-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const source = join(root, 'source'), target = join(root, 'target');
+  const firstMachineBindings = join(root, 'first-machine-bindings.json');
+  const otherMachineBindings = join(root, 'other-machine-bindings.json');
+  await copyExampleFixture(source); await copyExampleFixture(target);
+  await declareProjectReference(source, { projectRoot: target }, { bindingsFile: firstMachineBindings });
+  await rm(target, { recursive: true, force: true });
+
+  const state = await projectReferenceState(source, { bindingsFile: otherMachineBindings });
+  assert.equal(state.references.length, 1);
+  assert.equal(state.references[0].status, 'unavailable');
+  assert.match(state.references[0].message, /不存在|ENOENT|workspace/u);
+  assert.equal((await readProjectReferences(source)).references[0].workspaceId, 'sample-card-game');
+  await access(join(source, '.mechanics', 'workspace.json'));
+});
+
 test('绑定错误项目时不覆盖既有本机定位', async t => {
   const root = await mkdtemp(join(tmpdir(), 'game-graph-project-references-'));
   t.after(() => rm(root, { recursive: true, force: true }));

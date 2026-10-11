@@ -4,7 +4,7 @@ import fs from 'node:fs/promises';
 import { syncBuiltinESMExports } from 'node:module';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { commitFiles, acquireWorkspaceLock, encode } from '../src/server/files.mjs';
+import { commitFiles, acquireWorkspaceLock, encode, renameWithRetry } from '../src/server/files.mjs';
 
 // 仅测试进程替换内置导出；每例使用真实隔离目录，不给生产代码注入故障接口。
 const original = { ...fs };
@@ -13,6 +13,22 @@ function patch(t, name, implementation) {
   t.mock.method(fs, name, implementation);
   syncBuiltinESMExports();
 }
+
+test('目录改名遇到 Windows 瞬时 EPERM 时有限重试并成功', async t => {
+  const root = await original.mkdtemp(join(tmpdir(), 'mechanics-rename-retry-'));
+  t.after(async () => { t.mock.restoreAll(); syncBuiltinESMExports(); await original.rm(root, { recursive: true, force: true }); });
+  const source = join(root, 'source'), target = join(root, 'target'); await original.mkdir(source);
+  let attempts = 0;
+  patch(t, 'rename', async (...args) => {
+    attempts++;
+    if (attempts < 3) throw Object.assign(new Error('模拟短暂占用'), { code: 'EPERM' });
+    return original.rename(...args);
+  });
+  await renameWithRetry(source, target);
+  assert.equal(attempts, 3);
+  assert.equal((await original.lstat(target)).isDirectory(), true);
+});
+
 async function fixture(t) {
   const root = await original.mkdtemp(join(tmpdir(), 'mechanics-files-transaction-'));
   t.after(async () => {

@@ -44,12 +44,9 @@ test('分类透传：子概念能看到上位概念的声明与 is-a 路径，�
   assert.equal(declared.length, 1);
   assert.deepEqual(declared[0].isaPath, ['defense-stance', 'cap-concept']);
   assert.equal(result.taxonomy.interpretation, 'classificationContextOnly');
-  // is-a 一直是可遍历的一步，但含分类步骤的路径不带正负号：分类不被折算成影响。
+  // impact 只遍历 influence；is-a 结构仅通过 node.taxonomy 提供阅读上下文。
   const mixed = queryWorkspace(workspace(), { command: 'impact', from: 'defense-stance', to: 'bystander', maxDepth: 6 });
-  assert.equal(mixed.paths.length, 1);
-  assert.equal(mixed.paths[0].kind, 'mixed');
-  assert.equal(mixed.paths[0].effect, null, '含 is-a 步骤的路径不得给出正负影响结论');
-  assert.equal(mixed.paths[0].steps[0].operator, 'is-a>');
+  assert.deepEqual(mixed.paths, []);
 });
 
 test('影响派生只在显式请求时出现，并带配对来源', () => {

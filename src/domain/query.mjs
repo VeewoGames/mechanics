@@ -1,6 +1,6 @@
 import { QUERY_API_VERSION, SEMANTICS_VERSION, readingContract, queryGuide } from './query-contract.mjs';
 import { normalizeSearchTerm } from './identity.mjs';
-import { compactPath, enumerateImpactPaths, enumerateNodePaths, taxonomyContext } from './query-paths.mjs';
+import { compactPath, enumerateImpactPaths, enumerateNodePaths, partOfContext, taxonomyContext } from './query-paths.mjs';
 
 const fail = (code, message) => { throw Object.assign(new Error(message), { code }); };
 const limits = { hops: [1, 64], maxPaths: [50, 500], maxDepth: [16, 64], maxExpansions: [10000, 100000] };
@@ -92,7 +92,7 @@ function resolveConcept(nodes, key) {
     : candidates.length ? { status: 'ambiguous', key, candidates } : { status: 'not_found', key };
 }
 
-const directRuleDTO = (edge, nodeMap) => ({ id: edge.id, source: refDTO(nodeMap.get(edge.source)), target: refDTO(nodeMap.get(edge.target)), operator: edge.relation === 'specializes' ? 'is-a>' : edge.sign === 1 ? '+>' : edge.sign === -1 ? '->' : '?>', ...(edge.relation === 'influence' ? { ruleText: edge.ruleText ?? '' } : {}), ...(edge.sourceQualifiers?.length ? { sourceQualifiers: structuredClone(edge.sourceQualifiers) } : {}), ...(edge.targetQualifiers?.length ? { targetQualifiers: structuredClone(edge.targetQualifiers) } : {}), origin: edge.origin });
+const directRuleDTO = (edge, nodeMap) => ({ id: edge.id, relation: edge.relation, source: refDTO(nodeMap.get(edge.source)), target: refDTO(nodeMap.get(edge.target)), operator: edge.relation === 'specializes' ? 'is-a>' : edge.relation === 'part-of' ? 'part-of>' : edge.sign === 1 ? '+>' : edge.sign === -1 ? '->' : '?>', ...(edge.relation === 'influence' ? { ruleText: edge.ruleText ?? '' } : {}), ...(edge.sourceQualifiers?.length ? { sourceQualifiers: structuredClone(edge.sourceQualifiers) } : {}), ...(edge.targetQualifiers?.length ? { targetQualifiers: structuredClone(edge.targetQualifiers) } : {}), origin: edge.origin });
 // 显式请求继承时才计算派生边：它只由一等配对绑定生成，因此两端各自的 is-a 特化
 // 永远不会产生交叉配对。派生边不落盘、不级联，且与作者声明的同端点规则不并存。
 function derivedRetentionEdges(workspace, nodeMap) {
@@ -181,12 +181,15 @@ export function queryWorkspace(workspace, request) {
     if (direction !== 'downstream') traces.upstream = enumerateNodePaths({ edges: graph.edges, center: center.id, direction: 'upstream', hops, maxPaths, maxExpansions });
     if (direction !== 'upstream') traces.downstream = enumerateNodePaths({ edges: graph.edges, center: center.id, direction: 'downstream', hops, maxPaths, maxExpansions });
     return { ...result, center: refDTO(center), direction, hops, paths: Object.fromEntries(Object.entries(traces).map(([key, trace]) => [key, compactResult({}, trace, nodeMap)])),
-      taxonomy: taxonomyContext({ edges: graph.edges, from: center.id, hops }) };
+      taxonomy: taxonomyContext({ edges: graph.edges, from: center.id, hops }),
+      composition: partOfContext({ edges: graph.edges, from: center.id }) };
   }
   const from = nodeMap.get(request.from), to = nodeMap.get(request.to);
   if (!from || !to) fail('NODE_NOT_FOUND', 'impact 的 from 或 to 概念 ID 不存在');
   const inherited = request.includeInherited === true || request.includeInherited === 'true' ? derivedRetentionEdges(workspace, nodeMap) : [];
-  const trace = enumerateImpactPaths({ edges: [...graph.edges, ...inherited], from: from.id, to: to.id, maxPaths: request.maxPaths ?? limits.maxPaths[0], maxDepth: request.maxDepth ?? limits.maxDepth[0], maxExpansions: request.maxExpansions ?? limits.maxExpansions[0] });
+  // impact 只计算真实影响；is-a 与 part-of 仅出现在 node/search 的结构上下文中。
+  const influenceEdges = graph.edges.filter(edge => edge.relation === 'influence');
+  const trace = enumerateImpactPaths({ edges: [...influenceEdges, ...inherited], from: from.id, to: to.id, maxPaths: request.maxPaths ?? limits.maxPaths[0], maxDepth: request.maxDepth ?? limits.maxDepth[0], maxExpansions: request.maxExpansions ?? limits.maxExpansions[0] });
   return { ...compactResult(result, trace, nodeMap), from: refDTO(from), to: refDTO(to),
     includedDerivedEdges: inherited.map(edge => ({ id: edge.id, source: edge.source, target: edge.target, origin: edge.origin })) };
 }

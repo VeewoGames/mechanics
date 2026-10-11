@@ -13,9 +13,9 @@ const svg = (tag, attributes = {}) => {
 };
 // 摘要只有在全部来源规则均已填写时才显示关系色；不改变关系或极性。
 export function hasRuleText(edge) {
-  if (edge.relation === 'specializes') return true;
+  if (edge.relation === 'specializes' || edge.relation === 'part-of') return true;
   const rules = edge.steps?.length ? edge.steps : [edge];
-  return rules.every(rule => rule.relation === 'specializes' || Boolean(rule.ruleText?.trim()));
+  return rules.every(rule => ['specializes', 'part-of'].includes(rule.relation) || Boolean(rule.ruleText?.trim()));
 }
 
 export function badgeInteractionTargetId(badge, visibleNodeIds) {
@@ -2289,7 +2289,7 @@ export class GraphCanvas {
     else {
       const source = this.linkSource;
       // is-a 不再有连线模式，连线手势只产生影响符号。
-      const relation = this.mode === 'positive' ? 1 : this.mode === 'negative' ? -1 : 'random';
+      const relation = this.mode === 'part-of' ? 'part-of' : this.mode === 'positive' ? 1 : this.mode === 'negative' ? -1 : 'random';
       if (this.callbacks.link(source, id, relation)) this.linkSource = null;
       this.draw({ reroute: false });
     }
@@ -2344,7 +2344,7 @@ export class GraphCanvas {
   draw({ reroute = false } = {}) {
     this.root.replaceChildren();
     const defs = svg('defs');
-    for (const [id, fill] of [['positive', '#328577'], ['negative', '#bd7064'], ['random', '#8b6fb3'], ['specializes', '#c49a26'], ['empty-rule', '#9a9fa6']]) {
+    for (const [id, fill] of [['positive', '#328577'], ['negative', '#bd7064'], ['random', '#8b6fb3'], ['specializes', '#c49a26'], ['part-of', '#4f7f9a'], ['empty-rule', '#9a9fa6']]) {
       const marker = svg('marker', { id, markerWidth: 7, markerHeight: 7, refX: 6, refY: 3.5, orient: 'auto-start-reverse', markerUnits: 'strokeWidth' });
       marker.append(svg('path', { d: 'M0,0 L7,3.5 L0,7 Z', fill })); defs.append(marker);
     }
@@ -2376,21 +2376,21 @@ export class GraphCanvas {
       }
       if (geometry.points) geometry = { ...geometry, path: roundedPath(geometry.points), ...routeLabel(geometry.points) };
       const { path, labelX, labelY } = geometry;
-      const sign = edge.relation === 'specializes' ? 'specializes' : edge.sign === 1 ? 'positive' : edge.sign === -1 ? 'negative' : 'random';
+      const sign = edge.relation === 'specializes' ? 'specializes' : edge.relation === 'part-of' ? 'part-of' : edge.sign === 1 ? 'positive' : edge.sign === -1 ? 'negative' : 'random';
       const appearance = hasRuleText(edge) ? sign : 'empty-rule';
       const selected = this.selection?.type === 'edge' && this.selection.id === edge.id;
-      const relationName = sign === 'specializes' ? '特化 / 是某种' : sign === 'positive' ? '正向影响' : sign === 'negative' ? '负向影响' : '随机影响';
+      const relationName = sign === 'specializes' ? '特化 / 是某种' : sign === 'part-of' ? '组成 / 是其一部分' : sign === 'positive' ? '正向影响' : sign === 'negative' ? '负向影响' : '随机影响';
       const qualifierText = (qualifiers, side) => (qualifiers?.length ? `；${side}限定：${qualifiers.map(item => `${item.key}=${item.value.kind === 'concept' ? this.callbacks.name(item.value.conceptId) : String(item.value.value)}`).join('，')}` : '');
       const group = svg('g', { 'data-edge': edge.id, tabindex: 0, role: 'button', 'aria-label': `${this.callbacks.name(edge.source)}${qualifierText(edge.sourceQualifiers, '源')} ${relationName} ${this.callbacks.name(edge.target)}${qualifierText(edge.targetQualifiers, '目标')}` });
       const rules = edge.steps?.length ? edge.steps : [edge];
       const tooltipText = edgeHoverDetail({ ...edge, ruleText: rules.map(rule => rule.ruleText).filter(text => text?.trim()).join('\n\n') }, this.callbacks.name, { includeRelation: Boolean(this.includeRelationInHover) });
       if (tooltipText) group.setAttribute('data-tooltip', tooltipText);
       const hit = svg('path', { d: path, class: 'edge-hit' });
-      const line = svg('path', { d: path, class: `edge-line edge-${appearance} ${selected ? 'selected' : ''}`, 'marker-end': `url(#${appearance})`, ...(edge.relation === 'specializes' ? { 'stroke-dasharray': '6 4' } : {}), 'pointer-events': 'none' });
+      const line = svg('path', { d: path, class: `edge-line edge-${appearance} ${selected ? 'selected' : ''}`, 'marker-end': `url(#${appearance})`, ...(edge.relation !== 'influence' ? { 'stroke-dasharray': edge.relation === 'part-of' ? '2 4' : '6 4' } : {}), 'pointer-events': 'none' });
       group.append(hit, line);
       const label = svg('text', { x: labelX, y: labelY, class: `edge-label ${appearance}` });
       // 连线类型符号统一为字符体系（与工具栏、图例、检查器一致）：＋ 正向、− 负向、？ 随机、is-a 特化 / 是某种
-      label.textContent = sign === 'specializes' ? 'is-a' : edge.sign === 1 ? '＋' : edge.sign === -1 ? '−' : '？'; group.append(label); this.world.append(group);
+      label.textContent = sign === 'specializes' ? 'is-a' : sign === 'part-of' ? 'part-of' : edge.sign === 1 ? '＋' : edge.sign === -1 ? '−' : '？'; group.append(label); this.world.append(group);
       this.edgeElements.set(edge.id, { group, hit, line, label });
     }
     // 节点角色只从当前文件的本地连线派生，不写入 canonical，也不让引用连线改变角色。

@@ -106,23 +106,23 @@ function mutateConcept(workspace, body) {
 
 function finalEdge(previous, body) {
   const edge = previous ? structuredClone(previous) : {
-    id: semanticRuleId(body.source, body.target, new Set()), source: body.source, target: body.target,
-    relation: body.relation, ruleText: body.ruleText ?? '',
+    id: semanticRuleId(body.source, body.target, body.relation, new Set()), source: body.source, target: body.target,
+    relation: body.relation, ...(body.relation === 'influence' ? { ruleText: body.ruleText ?? '' } : {}),
   };
   for (const key of ['relation', 'sign', 'ruleText', 'inheritance', 'sourceQualifiers', 'targetQualifiers', 'customData']) if (has(body, key) && body[key] !== undefined) {
     if ((key === 'sourceQualifiers' || key === 'targetQualifiers') && body[key].length === 0) delete edge[key];
     else if (key === 'customData' && !customData(body, key)) delete edge[key];
     else edge[key] = body[key];
   }
-  if (edge.relation === 'specializes' && has(body, 'sign')) fail('AGENT_MUTATION_INVALID', 'specializes 规则不能提供 sign');
-  if (edge.relation === 'specializes') {
-    if (edge.sourceQualifiers || edge.targetQualifiers) fail('AGENT_MUTATION_INVALID', 'specializes 只能表达概念子类，不能添加限定词');
+  if (!['influence', 'specializes', 'part-of'].includes(edge.relation)) fail('AGENT_MUTATION_INVALID', 'relation 必须是 influence、specializes 或 part-of');
+  if (edge.relation !== 'influence') {
+    if (edge.sourceQualifiers || edge.targetQualifiers) fail('AGENT_MUTATION_INVALID', '结构关系不能添加限定词');
     delete edge.sign; delete edge.inheritance;
+    if (edge.relation === 'part-of') delete edge.ruleText;
   }
   if (edge.relation === 'influence' && !has(edge, 'inheritance')) edge.inheritance = { mode: 'none' };
   if (has(edge, 'ruleText')) requiredString(edge, 'ruleText', { blank: true });
   if (edge.relation === 'influence' && ![1, -1, 'random'].includes(edge.sign)) fail('AGENT_MUTATION_INVALID', 'influence 规则必须提供 sign：1、-1 或 random');
-  if (!['influence', 'specializes'].includes(edge.relation)) fail('AGENT_MUTATION_INVALID', 'relation 必须是 influence 或 specializes');
   return edge;
 }
 
@@ -150,7 +150,7 @@ function replaceSpecializesParent(workspace, body, mechanic) {
   const requested = body.parent === undefined || body.parent === null || body.parent === '' || body.parent === 'none' ? null : requiredString(body, 'parent');
   if (requested && !conceptById(workspace, requested)) fail('NODE_NOT_FOUND', `is-a 父概念不存在：${requested}`);
   const before = new Set(workspace.rules.rules.map(rule => rule.id));
-  workspace.rules.rules = setSpecializesParent(workspace.rules.rules, conceptId, requested);
+  workspace.rules.rules = setSpecializesParent(workspace.rules.rules, conceptId, requested, { schemaVersion: workspace.rules.schemaVersion });
   const after = new Set(workspace.rules.rules.map(rule => rule.id));
   const removed = new Set([...before].filter(id => !after.has(id)));
   const added = [...after].filter(id => !before.has(id));
@@ -177,7 +177,7 @@ function replaceSpecializesParent(workspace, body, mechanic) {
 function mutateRule(workspace, body) {
   const actions = new Set(['add', 'update', 'delete', 'set-parent']);
   if (!actions.has(body.action)) fail('AGENT_MUTATION_INVALID', 'rule action 必须是 add、update、delete 或 set-parent');
-  const writable = body.action === 'delete' ? ['mechanic', 'source', 'target', 'sourceQualifiers', 'targetQualifiers']
+  const writable = body.action === 'delete' ? ['mechanic', 'source', 'target', 'relation', 'sourceQualifiers', 'targetQualifiers']
     : body.action === 'set-parent' ? ['mechanic', 'concept', 'parent']
     : ['mechanic', 'source', 'target', 'relation', 'sign', 'ruleText', 'inheritance', 'sourceQualifiers', 'targetQualifiers', 'customData'];
   allowed(body, writable);
@@ -188,13 +188,20 @@ function mutateRule(workspace, body) {
   if (body.action === 'set-parent') return replaceSpecializesParent(workspace, body, mechanic);
   const source = requiredString(body, 'source'), target = requiredString(body, 'target');
   if (!conceptById(workspace, source) || !conceptById(workspace, target)) fail('NODE_NOT_FOUND', '规则端点必须是已存在的概念');
+  const endpointRules = workspace.rules.rules.filter(edge => edge.source === source && edge.target === target);
+  const relation = has(body, 'relation') ? requiredString(body, 'relation')
+    : endpointRules.length === 1 ? endpointRules[0].relation
+      : endpointRules.length === 0 && body.action !== 'add' ? null
+        : fail('AGENT_MUTATION_INVALID', '同一端点存在多种关系或正在新增规则时必须提供 relation');
   const sourceQualifiers = has(body, 'sourceQualifiers') ? jsonValue(body, 'sourceQualifiers') : undefined;
   const targetQualifiers = has(body, 'targetQualifiers') ? jsonValue(body, 'targetQualifiers') : undefined;
-  const sameEndpoint = edge => edge.source === source && edge.target === target;
-  const current = workspace.rules.rules.find(sameEndpoint);
+  const sameRelation = edge => edge.source === source && edge.target === target && edge.relation === relation;
+  const current = workspace.rules.rules.find(sameRelation);
   if (body.action === 'add') {
-    if (current) fail('DUPLICATE_ENDPOINT_RULE', `概念 ${source} 到 ${target} 已存在规则`);
-    const rule = finalEdge(null, { ...body, source, target, sourceQualifiers, targetQualifiers });
+    if (workspace.rules.schemaVersion === 1 && endpointRules.length) fail('DUPLICATE_ENDPOINT_RULE', `概念 ${source} 到 ${target} 已存在规则`);
+    if (current) fail('DUPLICATE_ENDPOINT_RELATION', `概念 ${source} 到 ${target} 已存在 ${relation} 规则`);
+    const rule = finalEdge(null, { ...body, source, target, relation, sourceQualifiers, targetQualifiers });
+    if (workspace.rules.schemaVersion === 1) rule.id = semanticRuleId(source, target, new Set(workspace.rules.rules.map(edge => edge.id)));
     workspace.rules.rules.push(rule);
     if (!mechanic.focusNodeIds.includes(source)) mechanic.focusNodeIds.push(source);
     if (!mechanic.focusNodeIds.includes(target)) mechanic.focusNodeIds.push(target);
@@ -203,7 +210,7 @@ function mutateRule(workspace, body) {
     if (!current) fail('RULE_NOT_FOUND', `不存在 ${source} 到 ${target} 的规则`);
     const previousRules = [current];
     if (body.action === 'update') {
-      const changed = ['relation', 'sign', 'ruleText', 'inheritance', 'sourceQualifiers', 'targetQualifiers', 'customData'].filter(key => has(body, key));
+      const changed = ['sign', 'ruleText', 'inheritance', 'sourceQualifiers', 'targetQualifiers', 'customData'].filter(key => has(body, key));
       if (!changed.length) fail('AGENT_MUTATION_INVALID', 'rule update 至少需要一个可编辑字段');
       workspace.rules.rules[workspace.rules.rules.indexOf(current)] = finalEdge(current, body);
     } else {

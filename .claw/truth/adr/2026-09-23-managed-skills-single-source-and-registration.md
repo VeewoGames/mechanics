@@ -13,6 +13,8 @@
 - 只有路径被普通文件或符号链接占用（包括 `.agents`、`.agents/skills` 本身）才返回 `PROJECT_SKILL_CONFLICT`，在创建工作区前失败，绝不覆盖非受管路径。
 - 四个入口共享同一实现与语义：`mech init` 在创建工作区之后注册，该阶段失败以 `INIT_PARTIAL` 报告已创建工作区或已安装 skill；网页打开/初始化后的后台同步只把结果写进会话的 `projectAssetSync`（失败为 `state: failed` + 错误码 + 服务日志），不阻断会话，修复后重开可重试；`mech sync` 等待同步完成；`mech migrate-project --execute` 在协议链式升级后注册并清理旧产品名的 skill。
 - 同步来源是当前运行服务/CLI 所来自的安装包，不联网升级；`.mechanics/tools` 是基础设施，不计入工作区文件树 revision，避免一次后台同步把正在编辑的草稿变成 revision 冲突。
+- Windows 目录发布、备份与回滚遇到 `EPERM`、`EACCES` 或 `EBUSY` 时，按有限退避重试（最多 8 次，等待间隔递增）；其他错误和重试耗尽仍显式失败并保留部分注册诊断，不把无界重试当成功。
+- 受管文件清单比较采用确定性路径排序，避免跨平台排序差异把内容一致的注册副本误判为过期。
 
 ## 取舍
 

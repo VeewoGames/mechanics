@@ -59,7 +59,7 @@ test('概念详情的 is-a 开关是复选框，与颜色分区分离且只改�
   assert.match(app, /taxonomyPresentation: clone\(viewTaxonomyPresentation\)/);
   assert.match(app, /if \(!selectionInDisplay\(displayGraph, selection\)\) selection = null;/);
   // 展开后画布画的是同一条 is-a 边的虚线，而不是另画一遍分类线。
-  assert.match(canvasSource, /edge\.relation === 'specializes' \? \{ 'stroke-dasharray': '6 4' \} : \{\}/);
+  assert.match(canvasSource, /edge\.relation !== 'influence'[\s\S]*?'stroke-dasharray'[\s\S]*?part-of/);
   assert.match(canvasSource, /const projection = this\.graph;/);
   // 新建/修改概念对话框都注入父概念候选，并通过同一条原子提交路径写入。
   assert.match(app, /const parentCandidates = conceptId => isaParentCandidates\(workspace\.definitions\.nodes, workspace\.rules\.rules, conceptId\)/);
@@ -177,11 +177,11 @@ test('操作控件使用统一 SVG 图标，关系记号仍作为领域信息保
   assert.match(app, /resourceIcon\.append\(icon\(kind === 'view' \? 'view' : 'mechanic'\)\)/);
   assert.match(app, /projectIcon\.append\(icon\(item\.pinned \? 'pin' : 'project'\)\)/);
   assert.match(html, /id="positive-tool"[^>]*>＋→<\/button>/);
-  // is-a 不再有连线工具：工具条只保留三种影响连线，页面里不再有任何 specializes 工具引用。
-  assert.match(html, /id="random-tool"[^>]*>？→<\/button><\/div>/);
+  // is-a 不用连线工具；工具条保留三种影响关系和 part-of 组成关系。
+  assert.match(html, /id="random-tool"[^>]*>？→<\/button>[\s\S]*?id="part-of-tool"[^>]*>◁→<\/button><\/div>/);
   assert.doesNotMatch(html, /specializes-tool/);
   assert.doesNotMatch(app, /specializes-tool/);
-  assert.match(app, /const relationMode = relation => relation === 'specializes' \? 'select' :/);
+  assert.match(app, /const relationMode = relation => relation === 'part-of' \? 'part-of' : relation === 'specializes' \? 'select' :/);
 });
 
 test('资源标签双击关闭，当前草稿仍通过既有确认流程处理', () => {

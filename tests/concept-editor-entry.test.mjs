@@ -129,7 +129,7 @@ test('引用窗口的新建候选同样可以指定 is-a，父概念随定义一
   assert.match(picker, /this\.session\.candidateParents instanceof Map\) this\.session\.candidateParents\.delete\(id\)/);
   const reference = app.slice(app.indexOf('async function addNode'), app.indexOf('function mechanismFolderPath'));
   assert.match(reference, /parentOptions: \(\) => \[\.\.\.parentCandidates\(null\), \.\.\.session\.candidates\]/);
-  assert.match(reference, /nextRules = setSpecializesParent\(nextRules \?\? workspace\.rules\.rules, childId, parentId\)/);
+  assert.match(reference, /nextRules = setSpecializesParent\(nextRules \?\? workspace\.rules\.rules, childId, parentId, \{ schemaVersion: workspace\.rules\.schemaVersion \}\)/);
   assert.match(reference, /is-a 父概念不存在或未被本次引用/);
   assert.match(reference, /api\('\/api\/concept-taxonomy', \{ revision, definitions: document, rules: session\.commit\.plan\.rules \}\)/);
 });

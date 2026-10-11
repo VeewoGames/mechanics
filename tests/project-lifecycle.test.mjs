@@ -62,7 +62,7 @@ async function openProject(origin, projectRoot, metadata = {}, headers = {}) {
 }
 
 
-test('v12 项目在打开时自动原子升级到 v14，直接严格读取则明确拒绝', async t => {
+test('v12 项目在打开时自动原子升级到 v15，直接严格读取则明确拒绝', async t => {
   const temp = await mkdtemp(join(tmpdir(), 'game-graph-v12-upgrade-'));
   const projectRoot = join(temp, 'v12-project');
   await copyExampleFixture(projectRoot);
@@ -73,21 +73,21 @@ test('v12 项目在打开时自动原子升级到 v14，直接严格读取则明
   t.after(async () => { await server.close(); await rm(temp, { recursive: true, force: true }); });
   const opened = await openProject(server.origin, projectRoot);
   assert.equal(opened.response.status, 200, JSON.stringify(opened.data));
-  assert.deepEqual(opened.data.projectUpgrade, { upgraded: true, from: 12, schemaVersion: 14 });
-  assert.equal(opened.data.manifest.schemaVersion, 14);
+  assert.deepEqual(opened.data.projectUpgrade, { upgraded: true, from: 12, schemaVersion: 15 });
+  assert.equal(opened.data.manifest.schemaVersion, 15);
   assert.equal(opened.data.compatibilityMode, false);
   const explicit = JSON.stringify({ mode: 'label', expandedNodeIds: [] });
   assert.ok(opened.data.mechanics.every(item => item.schemaVersion === 9 && item.implementationStatus === 'design' && JSON.stringify(item.taxonomyPresentation) === explicit));
   // 升级真实落盘，重开不再需要第二次升级。
   const onDisk = JSON.parse(await readFile(join(workspaceRoot, 'workspace.json'), 'utf8'));
-  assert.equal(onDisk.schemaVersion, 14);
+  assert.equal(onDisk.schemaVersion, 15);
   for (const name of (await readdir(join(workspaceRoot, 'mechanics'))).filter(name => name.endsWith('.mechanic.json'))) {
     assert.equal(JSON.parse(await readFile(join(workspaceRoot, 'mechanics', name), 'utf8')).schemaVersion, 9);
   }
   // 同一会话再次打开命中已升级的工作区，不再有第二次写入。
   const reopened = await openProject(server.origin, projectRoot);
   assert.equal(reopened.response.status, 200);
-  assert.equal(reopened.data.manifest.schemaVersion, 14);
+  assert.equal(reopened.data.manifest.schemaVersion, 15);
   await waitForPublication(server.origin, opened.data.projectSessionToken);
 });
 
@@ -382,7 +382,7 @@ test('删除未被视图引用的机制会移除 canonical 文件；被引用时
   await access(join(projectRoot, '.mechanics', path));
 });
 
-test('候选项目存在短事务写入锁时仍可打开并只读浏览', async t => {
+test('旧协议候选存在短事务锁时明确拒绝自动迁移', async t => {
   const temp = await mkdtemp(join(tmpdir(), 'game-graph-project-lock-'));
   const active = join(temp, 'active-project'), locked = join(temp, 'locked-project');
   await copyExampleFixture(active); await copyExampleFixture(locked);
@@ -390,15 +390,8 @@ test('候选项目存在短事务写入锁时仍可打开并只读浏览', async
   const server = await startServer({ projectRoot: active, port: 0, projectHistoryPath: join(temp, 'user', 'projects.json') });
   t.after(async () => { await server.close(); await release(); await rm(temp, { recursive: true, force: true }); });
   const attempt = await openProject(server.origin, locked);
-  assert.equal(attempt.response.status, 200);
-  assert.equal(attempt.data.projectRoot, locked);
-  const workspace = await (await fetch(server.origin + '/api/workspace')).json();
-  const document = structuredClone(workspace.definitions);
-  const blocked = await post(server.origin, '/api/save', {
-    projectGeneration: workspace.projectGeneration, revision: workspace.revision, kind: 'definitions', document,
-  });
-  assert.equal(blocked.response.status, 409);
-  assert.equal(blocked.data.error, 'WORKSPACE_LOCKED');
+  assert.equal(attempt.response.status, 409);
+  assert.equal(attempt.data.error, 'WORKSPACE_LOCKED');
 });
 
 test('切换项目不再尝试释放服务生命周期锁', async t => {

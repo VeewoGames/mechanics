@@ -20,6 +20,7 @@
   }
   function edgeStyle(edge) {
     if (edge.relation === "specializes") return { marker: "specializes", label: "is-a" };
+    if (edge.relation === "part-of") return { marker: "part-of", label: "part-of" };
     if (edge.sign === 1) return { marker: "positive", label: "\uFF0B" };
     if (edge.sign === -1) return { marker: "negative", label: "\u2212" };
     return { marker: "random", label: "\uFF1F" };
@@ -123,7 +124,7 @@
   function draw() {
     canvas.replaceChildren();
     const defs = svg("defs");
-    for (const [id, fill] of [["positive", "#328577"], ["negative", "#bd7064"], ["random", "#8b6fb3"], ["specializes", "#c49a26"]]) {
+    for (const [id, fill] of [["positive", "#328577"], ["negative", "#bd7064"], ["random", "#8b6fb3"], ["specializes", "#c49a26"], ["part-of", "#4f7f9a"]]) {
       const marker = svg("marker", { id, markerWidth: 7, markerHeight: 7, refX: 6, refY: 3.5, orient: "auto", markerUnits: "strokeWidth" });
       marker.append(svg("path", { d: "M0,0 L7,3.5 L0,7 Z", fill }));
       defs.append(marker);

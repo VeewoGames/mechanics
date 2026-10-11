@@ -1,9 +1,9 @@
 const byId = (a, b) => String(a.id).localeCompare(String(b.id));
 
-export const operatorFor = edge => edge.relation === 'specializes' ? 'is-a>' : edge.sign === 1 ? '+>' : edge.sign === -1 ? '->' : '?>';
+export const operatorFor = edge => edge.relation === 'specializes' ? 'is-a>' : edge.relation === 'part-of' ? 'part-of>' : edge.sign === 1 ? '+>' : edge.sign === -1 ? '->' : '?>';
 
 const effectFor = steps => {
-  if (steps.some(step => step.relation === 'specializes')) return null;
+  if (steps.some(step => step.relation !== 'influence')) return null;
   return steps.reduce((effect, step) => effect === 'random' || step.sign === 'random' ? 'random' : effect * step.sign, 1) === 1 ? 'positive'
     : steps.reduce((effect, step) => effect === 'random' || step.sign === 'random' ? 'random' : effect * step.sign, 1) === -1 ? 'negative' : 'random';
 };
@@ -14,13 +14,14 @@ export function compactPath(path, nodeMap) {
     ...(edge.sourceQualifiers?.length ? { sourceQualifiers: structuredClone(edge.sourceQualifiers) } : {}),
     ...(edge.targetQualifiers?.length ? { targetQualifiers: structuredClone(edge.targetQualifiers) } : {}),
   }));
-  const hasTaxonomy = path.edges.some(edge => edge.relation === 'specializes');
+  const relations = new Set(path.edges.map(edge => edge.relation));
+  const kind = relations.size > 1 ? 'mixed' : relations.has('specializes') ? 'taxonomy' : relations.has('part-of') ? 'composition' : 'influence';
   return {
     length: path.edges.length,
     nodes: path.nodes.map(id => ({ id, label: nodeMap.get(id)?.label ?? id })),
     steps,
     chain: path.nodes.map((id, index) => index === 0 ? id : `${steps[index - 1].operator} ${id}`).join(' '),
-    kind: hasTaxonomy ? (path.edges.every(edge => edge.relation === 'specializes') ? 'taxonomy' : 'mixed') : 'influence',
+    kind,
     effect: effectFor(path.edges),
   };
 }
@@ -87,6 +88,15 @@ export function taxonomyContext({ edges, from, hops = 1, maxAncestors = 64, maxD
   return { from, ancestors, declarations,
     interpretation: 'classificationContextOnly',
     note: '分类透传只列出上位概念及其声明边，供发现与上下文使用；子概念并不因此取得这些影响，也不参与正负号结论。' };
+}
+
+export function partOfContext({ edges, from }) {
+  const directWholes = edges.filter(edge => edge.relation === 'part-of' && edge.source === from)
+    .map(edge => ({ id: edge.target, ruleId: edge.id })).sort((a, b) => a.id.localeCompare(b.id));
+  const directParts = edges.filter(edge => edge.relation === 'part-of' && edge.target === from)
+    .map(edge => ({ id: edge.source, ruleId: edge.id })).sort((a, b) => a.id.localeCompare(b.id));
+  return { from, directWholes, directParts, interpretation: 'declaredCompositionOnly',
+    note: 'part-of 只返回作者直接声明的局部—整体结构；不传递、不继承，也不参与影响结论。' };
 }
 
 export function enumerateNodePaths({ edges, center, direction, hops = 1, maxPaths = 50, maxExpansions = 10000 }) {

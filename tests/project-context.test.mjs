@@ -12,6 +12,7 @@ import { readWorkspace } from '../src/server/workspace.mjs';
 import { publishCatalog } from '../src/server/catalog.mjs';
 import { createProjectManager } from '../src/server/project-manager.mjs';
 import { createProjectPreflight } from '../src/server/local-projects.mjs';
+import { registerProjectSkills } from '../src/server/project-skills.mjs';
 import { copyExampleFixture } from './example-fixture.mjs';
 
 const exec = promisify(execFile);
@@ -33,7 +34,7 @@ test('项目初始化原子创建固定工作区和默认 Agent 机制文档目�
   const result = await initProject(projectRoot, { name: '示例项目' });
   assert.equal(result.projectRoot, projectRoot);
   const manifest = JSON.parse(await readFile(join(projectRoot, '.mechanics/workspace.json'), 'utf8'));
-  assert.equal(manifest.schemaVersion, 14);
+  assert.equal(manifest.schemaVersion, 15);
   assert.equal(manifest.agentExportPath, 'mechanics');
   assert.match(await readFile(join(projectRoot, 'mechanics/AGENTS.md'), 'utf8'), /^# Mechanics Agent 文档使用规则/);
   assert.deepEqual((await readdir(join(projectRoot, 'mechanics'))).sort(), ['AGENTS.md', 'README.md', 'concepts.md']);
@@ -50,6 +51,7 @@ test('项目初始化原子创建固定工作区和默认 Agent 机制文档目�
     await readFile(fileURLToPath(new URL('../workspace-tools/workspace-tool.mjs', import.meta.url)), 'utf8'));
   const workspace = await readWorkspace(join(projectRoot, '.mechanics'));
   assert.equal(workspace.projectRoot, projectRoot);
+  assert.deepEqual((await registerProjectSkills(projectRoot)).installedSkills, []);
 });
 
 test('项目已有不同 Game-Graph skill 时初始化以安装源整体覆盖', async t => {

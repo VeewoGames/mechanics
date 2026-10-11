@@ -22,9 +22,16 @@ export function normalizeAliases(aliases = []) {
   return aliases.map(value => String(value).trim()).filter(Boolean);
 }
 
-export function semanticRuleId(source, target, used = new Set()) {
+export function semanticRuleId(source, target, relationOrUsed = null, maybeUsed = new Set()) {
   assertSemanticId(source, '规则源概念 ID '); assertSemanticId(target, '规则目标概念 ID ');
-  const base = `${source}-2-${target}`;
+  // rules v1 的调用方仍以第三参数传 used；rules v2 显式传 relation。
+  const legacy = relationOrUsed instanceof Set || relationOrUsed === null || relationOrUsed === undefined;
+  const relation = legacy ? null : relationOrUsed;
+  const used = relationOrUsed instanceof Set ? relationOrUsed : maybeUsed;
+  if (relation !== null && !['influence', 'specializes', 'part-of'].includes(relation)) {
+    throw new Error(`未知规则关系：${String(relation)}`);
+  }
+  const base = relation === null ? `${source}-2-${target}` : `${source}-2-${target}-${relation}`;
   if (!used.has(base)) return base;
-  throw new Error(`概念 ${source} 到 ${target} 已有规则。`);
+  throw new Error(`概念 ${source} 到 ${target} 已有 ${relation ?? "旧协议"} 规则。`);
 }

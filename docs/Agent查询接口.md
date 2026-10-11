@@ -18,7 +18,7 @@ game-graph agent impact --project ./my-game --from stamina --to failure
 
 `search --query` 先做精确解析，只接受稳定 ID、完整名称或完整别名：唯一命中返回概念详情；同名或同别名返回候选，调用方必须再使用其中稳定 ID。精确未命中时返回 `resolution.status` 为 `fuzzy` 的模糊候选（部分名称、别名、稳定 ID 或描述，按 `label`、`alias`、`id`、`description` 的命中强度排序，并给出 `matchedBy`、`score`、`total` 与 `truncated`）；候选只是线索，必须用其中的稳定 ID 再查一次，工具不会自动消歧。依然没有任何命中时仍是 `not_found`，不补候选。`search --from/--to` 始终精确解析，同时返回 A→B 与 B→A 的直接规则。
 
-`node` 和 `impact` 只返回紧凑结构路径，按短到长排序。路径使用 `+>`（正向影响）、`->`（负向影响）、`?>`（随机影响）与 `is-a>`（分类）。即使 `node --direction upstream` 为寻找入边而反向遍历，返回的 `nodes`、`steps`、`chain` 与 `effect` 也始终保持已声明规则的 source → target 方向；可直接按 `chain` 阅读。全影响链给出 positive/negative/random；含 `is-a>` 的混合链不推导影响结果。`counts`、`completeWithinBounds`、`truncationReasons` 明确本轮的条数和预算截断，不能据无路径断言游戏中不存在机制。
+`node` 返回紧凑的直接邻域路径，使用 `+>`（正向影响）、`->`（负向影响）、`?>`（随机影响）、`is-a>`（分类）与 `part-of>`（直接组成）；即使 `--direction upstream` 为寻找入边而反向遍历，返回方向仍保持已声明的 source → target。`node.taxonomy` 给出分类阅读上下文，`node.composition` 只给直接局部与整体。`impact` 仅遍历 influence，按短到长返回 positive/negative/random 结果，不把分类或组成当作影响步骤。`counts`、`completeWithinBounds`、`truncationReasons` 明确条数和预算截断，不能据无路径断言游戏中不存在机制。
 
 完整 `readingContract` 只在 `guide` 返回，其他结果仅带版本。规则文字与概念描述是模型数据，不会被自动求值或当作工具指令。
 
