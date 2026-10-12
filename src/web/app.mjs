@@ -156,6 +156,8 @@ function renderProjectTabs() {
   const root = $('project-tabs'); if (!root) return;
   root.replaceChildren();
   root.hidden = referencesCollapsed;
+  // 没有可进入的关联项目时，整块收成一行入口，不重复展示主项目。
+  root.closest('.reference-projects')?.classList.toggle('is-empty', !referenceProjects.some(reference => reference.status === 'ready'));
   // 此区域只表达“主项目 + 主项目声明的关联入口”。最近打开项目属于“打开项目”对话框，
   // 不能混入这里，否则普通项目会伪装成关联项目并错误切换主项目。
   const entries = [sourceProject && { projectRoot: sourceProject.projectRoot, name: sourceProject.name ?? sourceProject.manifest.name, primary: true },
@@ -223,13 +225,16 @@ function renderEditorTabs() {
   root.replaceChildren();
   for (const tab of editorTabs) {
     const active = tab.projectSessionToken === workspace?.projectSessionToken && tab.kind === (viewId !== null ? 'view' : 'mechanic') && tab.id === (viewId ?? activeId);
-    const item = button(tab.name, () => openEditorTab(tab).catch(showError), 'editor-tab' + (active ? ' is-active' : ''));
-    item.title = `${tab.projectName} · ${tab.kind === 'view' ? '视图' : '机制'} · ${tab.id}\n双击关闭标签`; item.setAttribute('aria-pressed', String(active)); root.append(item);
-    let clickTimer = null;
-    item.onclick = () => {
-      if (clickTimer) { clearTimeout(clickTimer); clickTimer = null; closeEditorTab(tab).catch(showError); return; }
-      clickTimer = setTimeout(() => { clickTimer = null; openEditorTab(tab).catch(showError); }, 220);
-    };
+    // 单击立即切换，不再为识别双击而延迟；关闭走显式的 × 按钮或鼠标中键。
+    const wrap = el('span', undefined, 'editor-tab-item' + (active ? ' is-active' : ''));
+    const item = button('', () => openEditorTab(tab).catch(showError), 'editor-tab' + (active ? ' is-active' : ''));
+    item.append(icon(tab.kind === 'view' ? 'view' : 'mechanic'), el('span', tab.name, 'editor-tab-name'));
+    item.title = `${tab.projectName} · ${tab.kind === 'view' ? '视图' : '机制'} · ${tab.id}`; item.setAttribute('aria-pressed', String(active));
+    const close = iconAction('close', () => closeEditorTab(tab).catch(showError), 'icon-button editor-tab-close');
+    close.title = `关闭标签：${tab.name}`; close.setAttribute('aria-label', close.title);
+    wrap.onauxclick = event => { if (event.button === 1) { event.preventDefault(); closeEditorTab(tab).catch(showError); } };
+    wrap.append(item, close); root.append(wrap);
+    if (active) queueMicrotask(() => wrap.scrollIntoView({ block: 'nearest', inline: 'nearest' }));
   }
 }
 function rememberEditorTab(candidate = null) {
@@ -247,7 +252,7 @@ function rememberEditorTab(candidate = null) {
 async function promptEditorTabLimit() {
   let enabled = autoCloseEditorTabs;
   await dialog(`已打开 ${EDITOR_TAB_LIMIT} 个文件标签`, container => {
-    container.append(el('p', `标签页最多保留 ${EDITOR_TAB_LIMIT} 个。请双击标签标题关闭不再需要的文件后再打开新文件。`, 'note'));
+    container.append(el('p', `标签页最多保留 ${EDITOR_TAB_LIMIT} 个。请点击标签上的 × 关闭不再需要的文件后再打开新文件。`, 'note'));
     const label = el('label', undefined, 'choice'), input = el('input'); input.type = 'checkbox'; input.checked = enabled;
     input.onchange = () => { enabled = input.checked; }; label.append(input, el('span', '以后自动关闭最早打开的文件')); container.append(label);
   }, () => { if (!enabled) return false; autoCloseEditorTabs = true; saveUiPreference('mechanics:auto-close-editor-tabs', true); persistTabState(); return true; }, '启用自动关闭');
@@ -388,6 +393,7 @@ function write(operation, { blocking = true } = {}) {
   return result.finally(() => { if (blocking) { pending--; updateStatus(); } });
 }
 function updateStatus() {
+  document.body.classList.toggle('no-session', !workspace);
   document.querySelector('.viewbar').hidden = definitionMode() || docsMode();
   $('breadcrumb').hidden = definitionMode() || docsMode();
   const table = definitionMode(), docs = docsMode();
@@ -1184,7 +1190,7 @@ function render(withInspector = true, { preserveRoutes = false } = {}) {
     $('counts').textContent = graph.nodes.length + ' 个节点 · ' + graph.edges.length + ' 条关系';
     $('empty').hidden = graph.nodes.length > 0;
     $('empty-title').textContent = viewMode() ? '选择要叠加的机制' : activeId === null ? '开始一张机制图' : '为这张图引用概念';
-    $('empty-hint').textContent = viewMode() ? '点击当前视图旁的＋，注册要展示的子机制。' : activeId === null ? '选择左侧机制文件，或新建一张机制图。' : '从概念表引用节点，再连接规则。';
+    $('empty-hint').textContent = viewMode() ? '在左侧视图详情里点「添加机制」，选择要叠加展示的子机制。' : activeId === null ? '选择左侧机制文件，或新建一张机制图。' : '从概念表引用节点，再连接规则。';
     $('empty-add').hidden = viewMode() || legacy;
     $('empty-add').textContent = activeId === null ? '新建机制图' : '概念节点';
     $('toolbar').hidden = legacy || (!viewMode() && activeId === null);

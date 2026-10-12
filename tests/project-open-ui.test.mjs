@@ -110,7 +110,7 @@ test('概念详情的 is-a 开关是复选框，与颜色分区分离且只改�
   // 选择器列表在侧栏里改为文档流内展开，避免被 #inspector 的滚动容器裁掉。
   assert.match(style, /\.detail\.node-taxonomy \.concept-reference-list\{position:static;max-height:190px;margin-top:4px\}/);
   // 列表项按名称 + 稳定 ID 两行排版，而不是把描述当预览混进结果。
-  assert.match(style, /\.concept-reference-option small\{color:#9aa895;font-size:10px/);
+  assert.match(style, /\.concept-reference-option small\{color:var\(--ink-3\);font-size:11px;font-family:var\(--mono\)/);
   assert.match(style, /\.detail\.node-taxonomy \.choice\{margin-top:9px;padding:0;border-bottom:0;align-items:flex-start\}/);
   assert.match(style, /\.detail\.node-taxonomy \.choice>span\{flex:1;min-width:0;line-height:1\.65;color:#526051\}/);
   // 忙碌或自动保存暂停时，面板内的复选框与侧栏保持一致地禁用。
@@ -246,8 +246,12 @@ test('操作控件使用统一 SVG 图标，关系记号仍作为领域信息保
   assert.doesNotMatch(canvasSource, /this\.mode === 'part-of'/);
 });
 
-test('资源标签双击关闭，当前草稿仍通过既有确认流程处理', () => {
-  assert.match(app, /if \(clickTimer\) \{ clearTimeout\(clickTimer\); clickTimer = null; closeEditorTab\(tab\)\.catch\(showError\); return; \}/);
+test('资源标签单击立即切换，经 × 按钮或中键关闭，当前草稿仍通过既有确认流程处理', () => {
+  // 不再为识别双击而延迟单击：切换没有定时器，关闭有显式入口。
+  assert.doesNotMatch(app, /clickTimer/);
+  assert.match(app, /iconAction\('close', \(\) => closeEditorTab\(tab\)\.catch\(showError\), 'icon-button editor-tab-close'\)/);
+  assert.match(app, /wrap\.onauxclick = event => \{ if \(event\.button === 1\)/);
+  assert.match(html, /<header class="topbar">[\s\S]*?<div class="viewbar"><nav id="editor-tabs"[\s\S]*?<\/header>/);
   assert.match(app, /async function closeEditorTab\(tab\)/);
   assert.match(app, /if \(active && !await guard\(\)\) return/);
   assert.match(app, /editorTabs\.splice\(index, 1\)/);
