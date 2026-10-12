@@ -148,7 +148,7 @@ const mutationFields = {
     add: ['mechanic', 'source', 'target', 'source-qualifiers', 'target-qualifiers', 'relation', 'sign', 'text', 'inheritance', 'custom-data'],
     update: ['mechanic', 'source', 'target', 'source-qualifiers', 'target-qualifiers', 'relation', 'sign', 'text', 'inheritance', 'custom-data'],
     delete: ['mechanic', 'source', 'target', 'source-qualifiers', 'target-qualifiers'],
-    'set-parent': ['mechanic', 'concept', 'parent'],
+    'set-parent': ['mechanic', 'concept', 'parent', 'relation'],
   },
 };
 
@@ -219,7 +219,7 @@ export async function runAgentMutation(resource, action, values) {
     if (values['custom-data'] !== undefined) body.customData = values['custom-data'];
   } else {
     for (const key of ['mechanic', 'source', 'target', 'relation']) if (values[key] !== undefined) body[key] = values[key];
-    // rule set-parent 用 --concept/--parent 定位分类出边，不接受 --source/--target。
+    // rule set-parent 用 --concept/--parent 定位结构出边，--relation 选 specializes 或 part-of；不接受 --source/--target。
     if (action === 'set-parent') {
       if (values.concept !== undefined) body.concept = values.concept;
       if (values.parent !== undefined) body.parent = values.parent;

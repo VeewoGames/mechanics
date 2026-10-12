@@ -44,11 +44,16 @@ const isa = (source, target) => ({ id: source + '-2-' + target, source, target, 
 
 test('已知 ID 直接 open 编辑 save，隔离单文件完成回读与 explicit 统计，歧义别名合法', async t => {
   const root = await copiedExampleProject(t), draft = await open(root);
-  assert.equal(draft.contractVersion, 7);
+  const guide = await run(root, ['guide']);
+  assert.equal(guide.contractVersion, 8);
+  assert.equal(draft.contractVersion, guide.contractVersion);
+  const dryRun = await run(root, command('validate', draft));
+  assert.equal(dryRun.contractVersion, guide.contractVersion);
   assert.match(draft.next, /draft save/);
   await edit(draft.definitionsPath, doc => { doc.nodes[0].aliases = ['共享别名']; doc.nodes[1].aliases = ['共享别名']; });
   await edit(draft.mechanicPath, doc => { doc.ruleSelection = 'explicit'; doc.focusNodeIds = ['armor']; doc.pinnedRuleIds = ['melee-2-damage']; });
   const result = await run(root, command('save', draft));
+  assert.equal(result.contractVersion, guide.contractVersion);
   assert.equal(result.saved, true); assert.equal(result.verified, true);
   assert.deepEqual(result.target, { mechanicId: 'basic-rules', file: 'mechanics/basic-rules.mechanic.json', created: false });
   assert.deepEqual(result.counts, { focusNodes: 1, rules: 1, projectedNodes: 3 });

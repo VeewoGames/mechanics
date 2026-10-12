@@ -28,15 +28,51 @@ export function badgeDisplayModel(badges, mode = 'line') {
   const withAccessibility = badge => ({ ...badge, accessibleText: badgeAccessibilityText(badge), displayText: badge.text });
   const fullText = badges.map(badgeAccessibilityText).join('；');
   if (mode !== 'badge') return { badges: badges.slice(0, 2).map(withAccessibility), fullText };
-  const isA = badges.find(badge => badge.kind === 'is-a');
+  // 结构父概念标签（is-a 或 part-of，二选一）在徽标模式下只显示关系类型。
+  const isA = badges.find(badge => badge.kind === 'is-a' || badge.kind === 'part-of');
   if (!isA) return { badges: badges.slice(0, 2).map(withAccessibility), fullText };
   const remaining = badges.filter(badge => badge !== isA);
-  const isABadge = { ...isA, accessibleText: badgeAccessibilityText(isA), displayText: 'is-a' };
+  const isABadge = { ...isA, accessibleText: badgeAccessibilityText(isA), displayText: isA.kind };
   const summary = remaining.length ? { text: '其余：' + remaining.map(badge => badge.text).join('；'), kind: 'summary', sourceId: isA.sourceId } : null;
   return { badges: [isABadge, ...(summary ? [withAccessibility(summary)] : [])], fullText };
 }
 
 const WIDTH = 166, HEIGHT = 62;
+// 节点卡片内的文字只做展示估宽：CJK 与全角按 1em，其余按经验比例；节点尺寸本身不随文字变化。
+const NODE_TEXT_X = 12, NODE_LABEL_FONT = 13;
+const CHIP_FONT = 10, CHIP_HEIGHT = 16, CHIP_PADDING = 6, CHIP_GAP = 4, CHIP_MORE_WIDTH = 26, CHIP_SHARED_MAX = 92;
+const characterUnits = character => {
+  const code = character.codePointAt(0);
+  return code > 0x2e7f ? 1 : /[A-Z0-9MWmw@%&]/u.test(character) ? .7 : /[ilj.,:;'|!()\s]/u.test(character) ? .34 : .58;
+};
+const textUnits = text => [...text].reduce((sum, character) => sum + characterUnits(character), 0);
+
+export function fitText(text, maxWidth, fontSize) {
+  if (textUnits(text) * fontSize <= maxWidth) return text;
+  const characters = [...text]; let width = fontSize, end = 0;
+  while (end < characters.length && width + characterUnits(characters[end]) * fontSize <= maxWidth) width += characterUnits(characters[end++]) * fontSize;
+  return characters.slice(0, end).join('') + '…';
+}
+
+// 节点第二行的胶囊布局：按给定顺序从左到右排，保证全部落在节点内宽里；放不下的合并成一个「+N」。
+export function nodeChipLayout(items, width = WIDTH) {
+  const limit = width - NODE_TEXT_X * 2, chips = []; let x = 0;
+  for (const [index, item] of items.entries()) {
+    const rest = items.length - index - 1, room = limit - x - (rest ? CHIP_GAP + CHIP_MORE_WIDTH : 0);
+    const natural = Math.ceil(textUnits(item.text) * CHIP_FONT) + CHIP_PADDING * 2;
+    const minimum = Math.min(natural, CHIP_PADDING * 2 + CHIP_FONT * 3);
+    if (room < minimum) break;
+    const chipWidth = Math.min(natural, room, rest ? CHIP_SHARED_MAX : room);
+    chips.push({ ...item, x, width: chipWidth, label: fitText(item.text, chipWidth - CHIP_PADDING * 2, CHIP_FONT) });
+    x += chipWidth + CHIP_GAP;
+  }
+  const hidden = items.slice(chips.length);
+  return { chips, more: hidden.length ? { x, width: CHIP_MORE_WIDTH, count: hidden.length, text: hidden.map(item => item.title ?? item.text).join('；') } : null };
+}
+const pillPath = (x, y, width, height) => {
+  const radius = height / 2;
+  return `M${x + radius},${y}h${width - height}a${radius},${radius} 0 0 1 0,${height}h${-(width - height)}a${radius},${radius} 0 0 1 0,${-height}z`;
+};
 const ROUTE_PADDING = 24;
 const ROUTE_NUDGE = 8;
 const ROUTE_READABLE_GAP = 48;
@@ -2289,7 +2325,7 @@ export class GraphCanvas {
     else {
       const source = this.linkSource;
       // is-a 不再有连线模式，连线手势只产生影响符号。
-      const relation = this.mode === 'part-of' ? 'part-of' : this.mode === 'positive' ? 1 : this.mode === 'negative' ? -1 : 'random';
+      const relation = this.mode === 'positive' ? 1 : this.mode === 'negative' ? -1 : 'random';
       if (this.callbacks.link(source, id, relation)) this.linkSource = null;
       this.draw({ reroute: false });
     }
@@ -2403,6 +2439,7 @@ export class GraphCanvas {
       if (targetDirection) targetDirection.incoming = true;
     }
     const tagLookup = new Map((this.tagDefinitions ?? []).map(tag => [tag.id.normalize('NFKC').trim().replace(/\s+/gu, ' ').toLocaleLowerCase(), tag]));
+    const visibleNodeIds = new Set(projection.nodes.map(item => item.id));
     for (const node of projection.nodes) {
       const point = positions[node.id];
       const selected = this.selectedIds().includes(node.id);
@@ -2415,28 +2452,41 @@ export class GraphCanvas {
       const group = svg('g', { 'data-node': node.id, transform: `translate(${point.x} ${point.y})`, class: `node ${selected ? 'selected' : ''} ${this.linkSource === node.id ? 'link-source' : ''} ${role} ${colorClass} ${styleClass}`, tabindex: 0, role: 'button', 'aria-label': node.label + roleLabel });
       const tooltipText = nodeHoverDetail(node);
       if (tooltipText) group.setAttribute('data-tooltip', tooltipText);
-      const label = svg('text', { x: 16, y: 27 }); label.textContent = node.label.length > 10 ? `${node.label.slice(0, 10)}…` : node.label;
-      const meta = svg('text', { x: 16, y: 45, class: 'node-meta' });
-      meta.textContent = this.definitionMode ? node.id.slice(0, 23) : '';
-      group.append(svg('rect', { width: WIDTH, height: HEIGHT, rx: 7 }), label, meta);
+      // 结构标签（is-a、基础、限定）在前，概念标签在后，统一排成框内一行胶囊。
+      const badgeModel = badgeDisplayModel(node.badges ?? [], this.structuralPresentation);
       const nodeTags = (node.tagIds ?? []).map(id => tagLookup.get(id.normalize('NFKC').trim().replace(/\s+/gu, ' ').toLocaleLowerCase())).filter(Boolean);
-      for (const [index, tag] of nodeTags.slice(0, 6).entries()) {
-        const dot = svg('circle', { cx: 20 + index * 10, cy: 43, r: 3.2, style: `fill:${tag.color};stroke:none`, 'pointer-events': 'none' });
-        const title = svg('title'); title.textContent = tag.displayName; dot.append(title); group.append(dot);
+      const chipLayout = this.definitionMode ? { chips: [], more: null } : nodeChipLayout([
+        ...badgeModel.badges.map(badge => ({ kind: 'badge', text: badge.displayText, title: badge.accessibleText, targetId: badgeInteractionTargetId(badge, visibleNodeIds) })),
+        ...nodeTags.map(tag => ({ kind: 'tag', text: tag.displayName, title: '标签：' + tag.displayName, color: tag.color })),
+      ]);
+      const hasSecondRow = this.definitionMode || chipLayout.chips.length > 0 || chipLayout.more !== null;
+      const label = svg('text', { x: NODE_TEXT_X, y: hasSecondRow ? 25 : 36 }); label.textContent = fitText(node.label, WIDTH - NODE_TEXT_X * 2, NODE_LABEL_FONT);
+      group.append(svg('rect', { width: WIDTH, height: HEIGHT, rx: 7 }), label);
+      if (this.definitionMode) {
+        const meta = svg('text', { x: NODE_TEXT_X, y: 45, class: 'node-meta' }); meta.textContent = node.id.slice(0, 23); group.append(meta);
       }
-      const badgeModel = badgeDisplayModel(node.badges, this.structuralPresentation);
-      const visibleNodeIds = new Set(projection.nodes.map(item => item.id));
-      for (const [index, badge] of badgeModel.badges.entries()) {
-        const targetId = badgeInteractionTargetId(badge, visibleNodeIds);
-        const badgeElement = svg('text', { x: 16, y: 58 + index * 12, class: 'node-badge', 'aria-label': badge.accessibleText });
-        if (targetId) {
-          badgeElement.setAttribute('tabindex', '0'); badgeElement.setAttribute('role', 'button');
-          badgeElement.addEventListener('click', event => { event.stopPropagation(); this.callbacks.select({ type: 'node', id: targetId }); });
+      const chipTop = HEIGHT - CHIP_HEIGHT - 9;
+      const appendChip = (chip, className, text, titleText) => {
+        const chipGroup = svg('g', { class: `node-chip ${className}`, 'aria-label': titleText });
+        const background = svg('path', { d: pillPath(NODE_TEXT_X + chip.x, chipTop, chip.width, CHIP_HEIGHT), class: 'node-chip-shape' });
+        const chipText = svg('text', { x: NODE_TEXT_X + chip.x + chip.width / 2, y: chipTop + 11.5, 'text-anchor': 'middle', class: 'node-chip-text' }); chipText.textContent = text;
+        const title = svg('title'); title.textContent = titleText;
+        chipGroup.append(title, background, chipText); group.append(chipGroup);
+        return { chipGroup, background };
+      };
+      for (const chip of chipLayout.chips) {
+        if (chip.kind === 'tag') {
+          const { background } = appendChip(chip, 'node-chip-tag', chip.label, chip.title);
+          // 页面 CSP 不允许内联 style 属性，标签色只能经 CSSOM 写入自定义属性。
+          background.style.setProperty('--tag-color', chip.color);
+          continue;
         }
-        badgeElement.textContent = badge.kind === 'is-a' ? badge.displayText : (badge.displayText.length > 22 ? badge.displayText.slice(0, 21) + '…' : badge.displayText);
-        const badgeTitle = svg('title'); badgeTitle.textContent = badge.accessibleText; badgeElement.append(badgeTitle);
-        group.append(badgeElement);
+        const { chipGroup } = appendChip(chip, 'node-chip-badge' + (chip.targetId ? ' is-link' : ''), chip.label, chip.title);
+        if (!chip.targetId) continue;
+        chipGroup.setAttribute('tabindex', '0'); chipGroup.setAttribute('role', 'button');
+        chipGroup.addEventListener('click', event => { event.stopPropagation(); this.callbacks.select({ type: 'node', id: chip.targetId }); });
       }
+      if (chipLayout.more) appendChip(chipLayout.more, 'node-chip-more', '+' + chipLayout.more.count, chipLayout.more.text);
       this.world.append(group); this.nodeElements.set(node.id, group);
     }
     if (this.gesture?.type === 'box' && this.gesture.moved) {

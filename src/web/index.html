@@ -11,6 +11,7 @@
     <symbol id="icon-project" viewBox="0 0 24 24"><path d="M3 6.5h7l2 2h9v10H3z"/><path d="M3 6.5V4h7l2 2.5"/></symbol><symbol id="icon-pin" viewBox="0 0 24 24"><path d="m9 3 6 6-2 2 3 4-1.5 1.5-4-3-2 2-6-6zM12 16l-5 5"/></symbol>
     <symbol id="icon-view" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M3 9h18M8 9v11"/></symbol><symbol id="icon-mechanic" viewBox="0 0 24 24"><circle cx="7" cy="7" r="2.5"/><circle cx="17" cy="7" r="2.5"/><circle cx="12" cy="17" r="2.5"/><path d="m9 8.5 2 6M15 8.5l-2 6M9.5 7h5"/></symbol>
     <symbol id="icon-plus" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></symbol><symbol id="icon-minus" viewBox="0 0 24 24"><path d="M5 12h14"/></symbol><symbol id="icon-close" viewBox="0 0 24 24"><path d="m6 6 12 12M18 6 6 18"/></symbol>
+    <symbol id="icon-folder-plus" viewBox="0 0 24 24"><path d="M3 6.5h7l2 2h9v10H3z"/><path d="M12 11v5M9.5 13.5h5"/></symbol>
     <symbol id="icon-trash" viewBox="0 0 24 24"><path d="M4 7h16M10 11v6M14 11v6M9 7l1-3h4l1 3M6 7l1 13h10l1-13"/></symbol>
     <symbol id="icon-chevron-down" viewBox="0 0 24 24"><path d="m6 9 6 6 6-6"/></symbol><symbol id="icon-chevron-up" viewBox="0 0 24 24"><path d="m6 15 6-6 6 6"/></symbol><symbol id="icon-chevron-right" viewBox="0 0 24 24"><path d="m9 6 6 6-6 6"/></symbol>
     <symbol id="icon-refresh" viewBox="0 0 24 24"><path d="M20 11a8 8 0 0 0-14-4L4 9"/><path d="M4 4v5h5M4 13a8 8 0 0 0 14 4l2-2"/><path d="M20 20v-5h-5"/></symbol><symbol id="icon-settings" viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.9l.1.1-2.6 2.6-.1-.1a1.7 1.7 0 0 0-1.9-.3 1.7 1.7 0 0 0-1 1.5v.2h-3.7v-.2a1.7 1.7 0 0 0-1-1.5 1.7 1.7 0 0 0-1.9.3l-.1.1-2.6-2.6.1-.1a1.7 1.7 0 0 0 .3-1.9 1.7 1.7 0 0 0-1.5-1H4v-3.7h.2a1.7 1.7 0 0 0 1.5-1 1.7 1.7 0 0 0-.3-1.9l-.1-.1L8 4.7l.1.1a1.7 1.7 0 0 0 1.9.3 1.7 1.7 0 0 0 1-1.5V3.4h3.7v.2a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.9-.3l.1-.1 2.6 2.6-.1.1a1.7 1.7 0 0 0-.3 1.9 1.7 1.7 0 0 0 1.5 1h.2V14h-.2a1.7 1.7 0 0 0-1.5 1Z"/></symbol>
@@ -44,23 +45,24 @@
       <button id="recent-tab" role="tab" aria-selected="false" aria-controls="resource-panel">最近打开 <span id="recent-file-count"></span></button>
     </nav>
     <section id="resource-panel" role="tabpanel" aria-live="polite">
-      <div class="resource-toolbar">
-        <div><strong id="resource-title">视图</strong></div>
-        <button id="resource-create-folder" class="quiet" title="新建机制文件夹" aria-label="新建机制文件夹" hidden>新建文件夹</button>
+      <strong id="resource-title" class="visually-hidden">视图</strong>
+      <div id="resource-actions" class="resource-actions">
+        <label class="resource-search"><svg class="ui-icon" aria-hidden="true"><use href="#icon-search"/></svg><input id="resource-search" type="search" placeholder="搜索名称、ID 或路径" aria-label="搜索视图" autocomplete="off"><kbd>Ctrl P</kbd></label>
+        <button id="resource-create-folder" class="icon-button" title="新建机制文件夹" aria-label="新建机制文件夹" hidden><svg class="ui-icon" aria-hidden="true"><use href="#icon-folder-plus"/></svg></button>
         <button id="resource-create" class="icon-button" title="新建机制" aria-label="新建机制"><svg class="ui-icon" aria-hidden="true"><use href="#icon-plus"/></svg></button>
       </div>
-      <label class="resource-search"><svg class="ui-icon" aria-hidden="true"><use href="#icon-search"/></svg><input id="resource-search" type="search" placeholder="搜索名称、ID 或路径" aria-label="搜索视图" autocomplete="off"><kbd>Ctrl P</kbd></label>
       <div id="resource-content" tabindex="-1"></div>
     </section>
     <button id="new-graph" hidden>新建机制</button>
   </aside>
+  <div id="sidebar-resizer" class="sidebar-resizer" role="separator" aria-orientation="vertical" aria-label="拖动调整侧栏宽度，双击恢复默认" title="拖动调整侧栏宽度，双击恢复默认" tabindex="0"></div>
   <button id="sidebar-scrim" class="sidebar-scrim" aria-label="关闭文件侧栏"></button>
   <main id="main">
     <header class="topbar">
       <button id="toggle-sidebar" class="icon-button" title="切换文件侧栏" aria-label="切换文件侧栏"><svg class="ui-icon" aria-hidden="true"><use href="#icon-menu"/></svg></button>
         <div id="main-views" class="view-switch" role="group" aria-label="工作视图"><button id="table-view">概念表</button><button id="graph-view">机制图</button><button id="docs-view">文档</button></div>
       <div id="breadcrumb" class="breadcrumb"><span id="file-kind">工作区</span><span class="slash">/</span><strong id="file-name">加载中</strong><span id="implementation-badge" hidden></span><span id="dirty-dot" hidden>●</span></div>
-      <div class="header-actions"><span id="save-state">本地文件</span><button id="delete-mechanic" class="quiet danger" hidden>删除机制图</button><button id="save" class="primary" disabled>保存 <kbd>Ctrl S</kbd></button><button id="new-view">新建视图</button></div>
+      <div class="header-actions"><span id="save-state">本地文件</span><button id="delete-mechanic" class="quiet danger" hidden>删除机制图</button><button id="save" class="primary" disabled>保存 <kbd>Ctrl S</kbd></button><button id="new-view" hidden>新建视图</button></div>
     </header>
     <div class="viewbar"><nav id="editor-tabs" class="editor-tabs" aria-label="已打开资源"></nav></div>
     <div id="legacy-notice" role="status" hidden>已保留旧叠加记录。请点击顶部“新建视图”完成迁移，或<button id="discard-legacy" class="quiet">放弃旧叠加</button>后打开机制。</div>
@@ -80,7 +82,7 @@
       <div id="canvas-context" hidden><button id="copy-file-path" type="button" title="点击复制文件路径"><svg class="ui-icon" aria-hidden="true"><use href="#icon-copy"/></svg><span id="canvas-file-name"></span></button><span id="copy-file-path-feedback" role="status" aria-live="polite" hidden>已复制路径</span></div>
       <div id="toolbar" class="floating" role="toolbar" aria-label="画布工具">
         <button id="add-node" class="tool icon-tool" title="添加概念节点" aria-label="添加概念节点"><svg class="tool-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><rect x="3" y="3" width="18" height="18" rx="2"></rect><path d="M12 8v8M8 12h8"></path></svg><span class="visually-hidden">添加概念节点</span></button>
-        <div id="relation-tools" class="relation-tools" role="radiogroup" aria-label="默认连线类型"><button id="positive-tool" class="tool positive is-selected" role="radio" aria-checked="true" title="源增加会使目标增加" aria-label="正向影响连线">＋→</button><button id="negative-tool" class="tool negative" role="radio" aria-checked="false" title="源增加会使目标减少" aria-label="负向影响连线">−→</button><button id="random-tool" class="tool random" role="radio" aria-checked="false" title="源增加可能使目标增加或减少，不表示概率" aria-label="随机影响连线">？→</button><button id="part-of-tool" class="tool part-of" role="radio" aria-checked="false" title="局部是整体的稳定组成部分" aria-label="组成关系连线">◁→</button></div>
+        <div id="relation-tools" class="relation-tools" role="radiogroup" aria-label="默认连线类型"><button id="positive-tool" class="tool positive is-selected" role="radio" aria-checked="true" title="源增加会使目标增加" aria-label="正向影响连线">＋→</button><button id="negative-tool" class="tool negative" role="radio" aria-checked="false" title="源增加会使目标减少" aria-label="负向影响连线">−→</button><button id="random-tool" class="tool random" role="radio" aria-checked="false" title="源增加可能使目标增加或减少，不表示概率" aria-label="随机影响连线">？→</button></div>
         <button id="auto-layout" class="tool icon-tool" title="没有选择时重排全部；选择节点后只重排选中节点" aria-label="自动排版全部节点"><svg class="tool-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><rect x="2.5" y="3.5" width="7" height="5" rx="1"></rect><rect x="14.5" y="3.5" width="7" height="5" rx="1"></rect><rect x="8.5" y="15.5" width="7" height="5" rx="1"></rect><path d="M6 8.5v3h12v-3M12 11.5v4"></path></svg><span class="visually-hidden">自动排版全部节点</span></button><button id="toggle-information-bar" class="tool icon-tool" title="关闭悬浮说明" aria-label="关闭悬浮说明" aria-pressed="true"><svg class="tool-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M6 3.5h9l3 3V20.5H6z"></path><path d="M15 3.5v3h3M9 11h6M9 15h6"></path></svg><span class="visually-hidden">关闭悬浮说明</span></button>
         <span class="divider"></span><button id="undo" class="tool icon-tool" title="撤销 Ctrl Z" aria-label="撤销" disabled><svg class="tool-icon" aria-hidden="true"><use href="#icon-undo"/></svg></button><button id="redo" class="tool icon-tool" title="重做 Ctrl Shift Z" aria-label="重做" disabled><svg class="tool-icon" aria-hidden="true"><use href="#icon-redo"/></svg></button>
       </div>

@@ -5,7 +5,7 @@ import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { createWorkspaceStore } from '../src/server/store.mjs';
 import { readWorkspace } from '../src/server/workspace.mjs';
-import { matchingConcepts, sameNamedConcepts, prepareReference, ReferenceCommit, prepareConceptUpdate, isaParentCandidates, conceptReferencePickerCandidates, nextPinnedRuleIds } from '../src/web/glossary.mjs';
+import { matchingConcepts, sameNamedConcepts, prepareReference, ReferenceCommit, prepareConceptUpdate, structuralParentCandidates, conceptReferencePickerCandidates, nextPinnedRuleIds } from '../src/web/glossary.mjs';
 import { graphPositions } from '../src/web/view-files.mjs';
 import { copyExampleFixture } from './example-fixture.mjs';
 import { compose, downstreamNodes, setSpecializesParent, specializesDescendants } from '../src/domain/graph.mjs';
@@ -219,10 +219,14 @@ test('is-a 父概念候选排除自身与更具体的后代，但必须保留当
   ];
   // specializes 是「具体概念 → 父概念」：后代要沿入边找。当前父概念 top 必须留在候选里，
   // 曾经的实现顺出边遍历，把 top 当成后代排除掉，详情栏才会显示为空。
-  assert.deepEqual(isaParentCandidates(nodes, rules, 'mid').map(node => node.id), ['top', 'other']);
-  assert.deepEqual(isaParentCandidates(nodes, rules, 'top').map(node => node.id), ['other']);
-  assert.deepEqual(isaParentCandidates(nodes, rules, 'leaf').map(node => node.id), ['top', 'mid', 'other']);
-  assert.deepEqual(isaParentCandidates(nodes, rules, '').map(node => node.id), ['top', 'mid', 'leaf', 'other']);
+  assert.deepEqual(structuralParentCandidates(nodes, rules, 'mid').map(node => node.id), ['top', 'other']);
+  assert.deepEqual(structuralParentCandidates(nodes, rules, 'top').map(node => node.id), ['other']);
+  assert.deepEqual(structuralParentCandidates(nodes, rules, 'leaf').map(node => node.id), ['top', 'mid', 'other']);
+  assert.deepEqual(structuralParentCandidates(nodes, rules, '').map(node => node.id), ['top', 'mid', 'leaf', 'other']);
+  // is-a 与 part-of 共用父概念槽位：part-of 后代同样会成环，也必须排除。
+  const mixed = [rules[0], { id: 'leaf-2-mid-part-of', source: 'leaf', target: 'mid', relation: 'part-of' }];
+  assert.deepEqual(structuralParentCandidates(nodes, mixed, 'top').map(node => node.id), ['other']);
+  assert.deepEqual(structuralParentCandidates(nodes, mixed, 'mid').map(node => node.id), ['top', 'other']);
   const search = (query, conceptId) => conceptReferencePickerCandidates(nodes,
     { query, kind: 'isa', currentId: conceptId, excluded: specializesDescendants(rules, conceptId) }).map(node => node.id);
   assert.deepEqual(search('中间层', 'leaf'), ['mid']);

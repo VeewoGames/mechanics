@@ -1,5 +1,5 @@
 import { lstat, realpath, open, readdir, mkdir } from 'node:fs/promises';
-import { resolve, relative, isAbsolute, sep } from 'node:path';
+import { resolve, relative, isAbsolute, sep, basename } from 'node:path';
 import { createHash } from 'node:crypto';
 import { assertDocument, validateWorkspace, validateMechanicResource, validateViewResource, workspaceValidationCore, ContractError } from '../domain/validate.mjs';
 import { resolvePresentationReferences } from '../domain/presentation.mjs';
@@ -105,6 +105,52 @@ export async function readDocument(root, file) {
   try { return { document: JSON.parse(raw), raw, actual }; }
   catch (error) { throw new ContractError('INVALID_JSON', file + ' 不是有效的 UTF-8 JSON：' + error.message); }
 }
+// 项目名称是轻量元信息，独立于目录枚举和全工作区领域加载；损坏时明确失败。
+export async function readProjectMetadata(projectRoot) {
+  if (typeof projectRoot !== 'string' || !isAbsolute(projectRoot)) throw new ContractError('PROJECT_REQUIRED', '读取项目名称必须提供绝对项目路径');
+  const project = await realpath(projectRoot), root = resolve(project, '.mechanics');
+  const info = await lstat(root);
+  if (info.isSymbolicLink() || !info.isDirectory()) throw new ContractError('UNSAFE_PATH', '项目工作区必须是普通目录：' + root);
+  const { document } = await readDocument(root, 'workspace.json');
+  if (document?.kind !== 'workspace' || typeof document.name !== 'string' || !document.name.trim()) {
+    throw new ContractError('PROJECT_METADATA_INVALID', 'workspace.json 缺少有效的项目显示名');
+  }
+  return { projectRoot: project, name: document.name };
+}
+
+// 目录浏览不解析任何领域文档。错误按路径呈现，链接不跟随，安全与数量边界仍保留。
+export async function readWorkspaceDirectory(projectRoot) {
+  if (typeof projectRoot !== 'string' || !isAbsolute(projectRoot)) throw new ContractError('PROJECT_REQUIRED', '打开目录必须提供绝对项目路径');
+  const project = await realpath(projectRoot), root = resolve(project, '.mechanics');
+  if (!(await lstat(project)).isDirectory()) throw new ContractError('PROJECT_REQUIRED', '项目路径不是目录');
+  const files = [], directories = [], diagnostics = []; let count = 0;
+  const report = (path, error) => diagnostics.push({ path, code: error.code ?? 'DIRECTORY_READ_FAILED', message: error.message });
+  async function visit(directory, depth) {
+    try {
+      if (depth > 24) throw new ContractError('FILE_LIMIT', '目录深度超过 24 层');
+      const path = directory ? resolve(root, directory) : root;
+      const info = await lstat(path);
+      if (info.isSymbolicLink() || !info.isDirectory()) throw new ContractError('UNSAFE_PATH', '不能浏览链接或非普通目录：' + path);
+      const entries = await readdir(path, { withFileTypes: true });
+      for (const entry of entries.sort((a, b) => a.name.localeCompare(b.name))) {
+        if (entry.name.startsWith('.') || entry.name === 'node_modules' || entry.name === managedToolDirectory) continue;
+        if (++count > 10000) throw new ContractError('FILE_LIMIT', '可见目录项超过 10000');
+        const file = directory ? directory + '/' + entry.name : entry.name;
+        try {
+          assertRelativeFile(file + '/check.json');
+          const info = await lstat(resolve(root, file));
+          if (info.isSymbolicLink()) throw new ContractError('UNSAFE_PATH', '未跟随符号链接或 junction：' + file);
+          if (info.isDirectory()) { directories.push(file); await visit(file, depth + 1); }
+          else if (info.isFile()) files.push({ path: file });
+        } catch (error) { report(file, error); }
+      }
+    } catch (error) { report(directory || '.mechanics', error); }
+  }
+  await visit('', 0);
+  return { navigationOnly: true, projectRoot: project, workspaceRoot: root,
+    name: basename(project), files, directories, diagnostics };
+}
+
 export async function discover(root) {
   const mechanicPaths = [], viewPaths = [], directories = []; let count = 0;
   async function visit(directory, depth) {
@@ -155,9 +201,17 @@ export async function readWorkspace(workspaceRoot, { context = null, isolateReso
     }
   }
   const { mechanicPaths, viewPaths, directories } = await discover(root);
-  const rawMechanics = [], rawViews = [];
-  for (const file of mechanicPaths) rawMechanics.push({ document: await read(file), path: file });
-  for (const file of viewPaths) rawViews.push({ document: await read(file), path: file });
+  const rawMechanics = [], rawViews = [], resourceDiagnostics = [];
+  // 字节读取与 JSON 解析也属于资源边界，不能在隔离校验之前阻断整个项目。
+  for (const [kind, paths, target] of [['mechanic', mechanicPaths, rawMechanics], ['view', viewPaths, rawViews]]) {
+    for (const file of paths) {
+      try { target.push({ document: await read(file), path: file }); }
+      catch (error) {
+        if (!isolateResources) throw error;
+        resourceDiagnostics.push({ kind, path: file, code: error.code ?? 'RESOURCE_READ_FAILED', message: error.message });
+      }
+    }
+  }
   const compatible = compatibilityWorkspace({ manifest: rawManifest, definitions: rawDefinitions, rawRules, rawMechanics, rawViews });
   const { manifest, definitions, rules } = compatible;
   context ??= await projectContext(await projectRootFromWorkspace(root), { manifest, createExportRoot: false,
@@ -170,7 +224,6 @@ export async function readWorkspace(workspaceRoot, { context = null, isolateReso
   // 逐资源校验改为拿着核心索引检查自身结构与引用，避免对每张机制图重跑一遍完整校验。
   const core = workspaceValidationCore({ manifest, definitions, rules });
   const mechanics = [], views = [], mechanicFiles = [], viewFiles = [];
-  const resourceDiagnostics = [];
   for (const item of compatible.mechanics) {
     const { document, path: file } = item;
     try {

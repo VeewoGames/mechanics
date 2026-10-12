@@ -45,6 +45,26 @@ test('真实视图混排发现、按类型区分同 ID，保存只改视图且�
   } finally { await store.close(); }
 });
 
+test('删除视图只移除视图文件并同事务清理最近记录，机制文件原样保留', async t => {
+  const root = await fixture(t), store = await createWorkspaceStore(root);
+  try {
+    let data = await store.read();
+    const rulesBefore = await readFile(join(root, 'mechanics/hand.mechanic.json'), 'utf8');
+    data = await store.createView({ revision: data.revision, document: view(), file: '关卡/首领.view.json' });
+    data = await store.createView({ revision: data.revision, document: view('other'), file: 'other.view.json' });
+    data = await store.save({ revision: data.revision, kind: 'workspace', document: { ...data.manifest, lastView: { viewId: 'hand' } } });
+    await assert.rejects(store.deleteView({ revision: data.revision, viewId: 'missing' }), { code: 'VIEW_NOT_FOUND' });
+    await assert.rejects(store.deleteView({ revision: 'stale', viewId: 'hand' }), { code: 'REVISION_CONFLICT' });
+    data = await store.deleteView({ revision: data.revision, viewId: 'hand' });
+    assert.deepEqual(data.views.map(item => item.id), ['other']);
+    assert.equal(data.files.some(file => file.kind === 'view' && file.id === 'hand'), false);
+    assert.equal(Object.hasOwn(await json(root, 'workspace.json'), 'lastView'), false);
+    await assert.rejects(readFile(join(root, '关卡/首领.view.json'), 'utf8'), { code: 'ENOENT' });
+    assert.equal(await readFile(join(root, 'mechanics/hand.mechanic.json'), 'utf8'), rulesBefore);
+    assert.doesNotThrow(() => validateWorkspace(data));
+  } finally { await store.close(); }
+});
+
 test('view v3 强制结构展示值，保存重开保持 badge 且不改变语义源文件', async t => {
   const root = await fixture(t), store = await createWorkspaceStore(root);
   try {

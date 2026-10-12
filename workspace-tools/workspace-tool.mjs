@@ -6916,6 +6916,8 @@ function semanticRuleId(source, target, relationOrUsed = null, maybeUsed = /* @_
 }
 
 // src/domain/graph.mjs
+var STRUCTURAL_RELATIONS = Object.freeze(["specializes", "part-of"]);
+var isStructuralRelation = (relation) => STRUCTURAL_RELATIONS.includes(relation);
 function assertSpecializes(edges) {
   const specializes = edges.filter((edge) => edge.relation === "specializes");
   const parentByChild = /* @__PURE__ */ new Map();
@@ -6979,6 +6981,32 @@ function assertPartOf(edges) {
     visited.add(node);
   }
   for (const node of adjacent.keys()) visit(node);
+}
+function assertStructuralRelations(edges) {
+  assertSpecializes(edges);
+  assertPartOf(edges);
+  const parentByChild = /* @__PURE__ */ new Map();
+  for (const edge of edges) if (isStructuralRelation(edge.relation)) {
+    const previous = parentByChild.get(edge.source);
+    if (previous) {
+      const error = new Error(`概念 ${edge.source} 只能有一个结构父概念（is-a 与 part-of 二选一）；规则 ${previous.id} 指向 ${previous.target}，规则 ${edge.id} 指向 ${edge.target}`);
+      error.code = "STRUCTURAL_MULTIPLE_PARENTS";
+      error.details = { firstRuleId: previous.id, secondRuleId: edge.id };
+      throw error;
+    }
+    parentByChild.set(edge.source, edge);
+  }
+  for (const start of parentByChild.keys()) {
+    const chain = [start];
+    for (let edge = parentByChild.get(start); edge; edge = parentByChild.get(edge.target)) {
+      if (chain.includes(edge.target)) {
+        const error = new Error(`is-a 与 part-of 混合形成结构环：${[...chain, edge.target].join(" → ")}`);
+        error.code = "STRUCTURAL_CYCLE";
+        throw error;
+      }
+      chain.push(edge.target);
+    }
+  }
 }
 
 // src/domain/view.mjs
@@ -8049,8 +8077,7 @@ function validateWorkspace({ manifest, definitions, rules, mechanics, views = []
   }
   unique(rules.rules, "规则库");
   try {
-    assertSpecializes(rules.rules);
-    assertPartOf(rules.rules);
+    assertStructuralRelations(rules.rules);
   } catch (error) {
     error.details = { resource: manifest.rules, field: "rules", ...error.details };
     throw error;
@@ -8138,7 +8165,7 @@ function validateWorkspace({ manifest, definitions, rules, mechanics, views = []
 
 // src/server/workspace.mjs
 import { lstat, realpath, open, readdir, mkdir } from "node:fs/promises";
-import { resolve, relative, isAbsolute, sep } from "node:path";
+import { resolve, relative, isAbsolute, sep, basename } from "node:path";
 var MAX_BYTES = 2 * 1024 * 1024;
 var presentationFields = /* @__PURE__ */ new Set(["positions", "projectionPositions", "routeCache", "nodeColors", "nodeStyles"]);
 function withoutPresentation(value) {
@@ -8448,6 +8475,7 @@ function mechanicFolderOf(file) {
 }
 
 // src/tools/workspace-tool-source.mjs
+var WORKSPACE_TOOL_CONTRACT_VERSION = 8;
 var root = dirname(dirname(dirname(fileURLToPath(import.meta.url))));
 var workspace = join(root, ".mechanics");
 var drafts = join(workspace, ".agent-drafts");
@@ -8526,7 +8554,7 @@ async function snapshot({ validate = true, includeViews = true } = {}) {
 }
 var operator = (edge) => edge.relation === "specializes" ? "is-a>" : edge.relation === "part-of" ? "part-of>" : edge.sign === 1 ? "+>" : edge.sign === -1 ? "->" : "?>";
 var guide = () => ({
-  contractVersion: 8,
+  contractVersion: WORKSPACE_TOOL_CONTRACT_VERSION,
   commands: ["scopes", "search", "graph", "node", "impact", "draft open", "draft validate", "draft save", "isa set"],
   workflow: ["draft open（已知 ID 直接打开；新图携带名称与范围）", "定向编辑三份草稿的相关内容，保留无关事实", "draft save（自动校验与回读确认）"],
   optional: { guide: "首次需要字段合同时读取", scopes: "仅定位未知目标或目录", validate: "可选不保存 dry-run；不作为 save 前置" },
@@ -8537,7 +8565,7 @@ var guide = () => ({
   exportMaintenance: { createdMechanic: "新建机制图默认进入单独导出：curated 模式补一条独立选择，机制图所在的直接文件夹已选中则不补，视图永不自动进入导出清单", documents: "工具只维护导出清单；文档本身仍需显式生成（网页或 CLI）", failure: "workspace.json 基线不符报 RESOURCE_REVISION_CONFLICT；写入或回读失败报 MIGRATION_WRITE_FAILED，并以 commitState/rollbackComplete/recovery 区分已回滚与结果待确认；已提交后的清理问题返回 saved:true 与 warnings，不能重提" },
   implementationStatus: { field: "implementationStatus", allowedValues: ["design", "implemented"], newMechanic: "design", rule: "只有作者确认已在实际游戏中实现时才手动标 implemented；旧机制迁移一律 design" },
   mechanicSelection: { optionalField: "ruleSelection", allowedValue: "explicit", whenOmitted: "按 focusNodeIds 展开一跳规则并合入 pinnedRuleIds", whenExplicit: "节点保留 focusNodeIds 与固定规则端点；只投影 pinnedRuleIds 的规则，不展开相邻规则" },
-  constraints: ["is-a 每个概念至多一个父概念，用 isa set 更换或清除；不要手写第二条 specializes 出边", "概念标签只引用 definitions.tagDefinitions 中已存在的 tagIds；显示名和颜色只在标签表维护", "所有持久化 ID 使用英文小写 kebab-case", "规则只存于 rules.json，rules v2 的 ID 固定为 source-2-target-relation", "同一有向端点与同一 relation 在全工作区只能有一条规则；influence 可与一种结构关系同端点共存", "part-of 方向是局部到整体，允许多整体，禁止自连和环；不携带符号、继承、限定词或规则文字，也不参与 impact", "mechanic 用 focusNodeIds 与 pinnedRuleIds 选择投影；省略 ruleSelection 时展开焦点邻接规则，explicit 时只投影固定规则与焦点节点", "限定词只属于 influence 规则端点", "node 的 upstream 只表示发现上游的遍历方向；paths 中的 nodes、steps、chain 与 effect 始终按规则声明的 source → target 方向返回", "草稿不允许 positions、projectionPositions 或 routeCache", "save 自动检查完整候选并回读确认；validate 仅可选 dry-run；不执行自动排版或文档导出", "search --query 先精确解析，只有精确未命中才返回 resolution.status 为 fuzzy 的模糊候选（label、alias、id、description），候选只是线索，必须用其中的稳定 ID 再查一次，工具不会自动消歧", "graph --ids 只投影请求集合内部已声明的规则；集合外端点、路径推导、视图、坐标与配色都不进入结果"]
+  constraints: ["每个概念至多一个结构父概念，is-a（specializes）与 part-of 二选一；用 isa set --concept <子概念> --parent <父概念|none> [--relation specializes|part-of] 更换、切换类型或清除，不要手写第二条结构出边", "概念标签只引用 definitions.tagDefinitions 中已存在的 tagIds；显示名和颜色只在标签表维护", "所有持久化 ID 使用英文小写 kebab-case", "规则只存于 rules.json，rules v2 的 ID 固定为 source-2-target-relation", "同一有向端点与同一 relation 在全工作区只能有一条规则；influence 可与一种结构关系同端点共存", "part-of 方向是局部到整体，一个局部只属于一个整体且不能同时有 is-a 父概念，禁止自连和环；不携带符号、继承、限定词或规则文字，也不参与 impact", "mechanic 用 focusNodeIds 与 pinnedRuleIds 选择投影；省略 ruleSelection 时展开焦点邻接规则，explicit 时只投影固定规则与焦点节点", "限定词只属于 influence 规则端点", "node 的 upstream 只表示发现上游的遍历方向；paths 中的 nodes、steps、chain 与 effect 始终按规则声明的 source → target 方向返回", "草稿不允许 positions、projectionPositions 或 routeCache", "save 自动检查完整候选并回读确认；validate 仅可选 dry-run；不执行自动排版或文档导出", "search --query 先精确解析，只有精确未命中才返回 resolution.status 为 fuzzy 的模糊候选（label、alias、id、description），候选只是线索，必须用其中的稳定 ID 再查一次，工具不会自动消歧", "graph --ids 只投影请求集合内部已声明的规则；集合外端点、路径推导、视图、坐标与配色都不进入结果"]
 });
 var semanticId = (value) => typeof value === "string" && /^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$/u.test(value);
 var text = (value, field) => {
@@ -8710,7 +8738,7 @@ async function openDraft(mechanicId, options) {
   };
   await writeFile(join(draftFolder, "draft.json"), JSON.stringify(meta, null, 2) + "\n");
   return {
-    contractVersion: 7,
+    contractVersion: WORKSPACE_TOOL_CONTRACT_VERSION,
     next: "编辑相关内容后 draft save；validate 仅可选 dry-run",
     contract: { conceptTemplate, influenceRuleTemplate, specializesRuleTemplate, partOfRuleTemplate, mechanicSelection, fullLibraryDrafts: true, preserveUnrelatedEntries: true, agentLocks: "不可更改锁标记、修改或删除锁定概念", validation: "脚本校验全部机制与视图引用，无需人工全量通读", sequentialMechanics: true },
     targetFile: meta.targetFile,
@@ -8725,7 +8753,11 @@ async function openDraft(mechanicId, options) {
     geometry: "已从草稿移除；保存时保留既有节点位置并清除过期路径缓存"
   };
 }
-async function setIsaParent(draftId2, conceptId, parentOption) {
+async function setIsaParent(draftId2, conceptId, parentOption, relationOption) {
+  const relation = relationOption === void 0 || relationOption === "is-a" ? "specializes" : String(relationOption);
+  if (!["specializes", "part-of"].includes(relation)) fail("TOOL_INVALID", "isa set 的 --relation 必须是 specializes 或 part-of");
+  const structural = (rule) => rule.relation === "specializes" || rule.relation === "part-of";
+  const relationLabel = relation === "part-of" ? "part-of" : "is-a";
   const folder2 = draftFolderFor(draftId2);
   const meta = (await parse(join(folder2, "draft.json"))).value;
   const draftDefinitions = await parse(join(folder2, "definitions.json")), draftRules = await parse(join(folder2, "rules.json")), draftMechanic = await parse(join(folder2, "mechanic.json"));
@@ -8739,16 +8771,18 @@ async function setIsaParent(draftId2, conceptId, parentOption) {
   if (!nodes.has(conceptId)) fail("NODE_NOT_FOUND", `概念不存在：${conceptId}`);
   const parentId = parentOption === void 0 || parentOption === null || parentOption === "" || parentOption === "none" ? null : String(parentOption);
   if (parentId !== null) {
-    if (!nodes.has(parentId)) fail("NODE_NOT_FOUND", `is-a 父概念不存在：${parentId}`);
-    if (parentId === conceptId) fail("DRAFT_VALIDATION_FAILED", `概念 ${conceptId} 不能成为自己的 is-a 父概念（SPECIALIZES_SELF_LINK）`, { causeCode: "SPECIALIZES_SELF_LINK", details: { id: conceptId } });
+    if (!nodes.has(parentId)) fail("NODE_NOT_FOUND", `${relationLabel} 父概念不存在：${parentId}`);
+    const selfLink = relation === "part-of" ? "PART_OF_SELF_LINK" : "SPECIALIZES_SELF_LINK";
+    if (parentId === conceptId) fail("DRAFT_VALIDATION_FAILED", `概念 ${conceptId} 不能成为自己的 ${relationLabel} 父概念（${selfLink}）`, { causeCode: selfLink, details: { id: conceptId } });
+    if (relation === "part-of" && draftRules.value.schemaVersion < 2) fail("DRAFT_VALIDATION_FAILED", "part-of 只允许写入 rules v2（RELATION_REQUIRES_RULES_V2）", { causeCode: "RELATION_REQUIRES_RULES_V2" });
   }
   const rules = structuredClone(draftRules.value), mechanic = structuredClone(draftMechanic.value);
-  const previous = rules.rules.find((rule) => rule.relation === "specializes" && rule.source === conceptId) ?? null;
-  if ((previous?.target ?? null) === parentId) return { draftId: draftId2, concept: conceptId, parent: parentId, changed: false, path: join(folder2, "rules.json") };
-  const nextId = parentId === null ? null : rules.schemaVersion >= 2 ? `${conceptId}-2-${parentId}-specializes` : `${conceptId}-2-${parentId}`;
-  if (nextId && rules.rules.some((rule) => rule.id === nextId)) fail("DRAFT_VALIDATION_FAILED", `概念 ${conceptId} 到 ${parentId} 已有其它规则，不能同时作为 is-a`);
-  rules.rules = rules.rules.filter((rule) => !(rule.relation === "specializes" && rule.source === conceptId));
-  if (nextId) rules.rules.push({ id: nextId, source: conceptId, target: parentId, relation: "specializes" });
+  const previous = rules.rules.find((rule) => structural(rule) && rule.source === conceptId) ?? null;
+  if ((previous?.target ?? null) === parentId && (parentId === null || previous.relation === relation)) return { draftId: draftId2, concept: conceptId, parent: parentId, relation: parentId === null ? null : relation, changed: false, path: join(folder2, "rules.json") };
+  const nextId = parentId === null ? null : rules.schemaVersion >= 2 ? `${conceptId}-2-${parentId}-${relation}` : `${conceptId}-2-${parentId}`;
+  rules.rules = rules.rules.filter((rule) => !(structural(rule) && rule.source === conceptId));
+  if (nextId && rules.rules.some((rule) => rule.id === nextId)) fail("DRAFT_VALIDATION_FAILED", `概念 ${conceptId} 到 ${parentId} 已有其它规则，不能同时作为 ${relationLabel}`);
+  if (nextId) rules.rules.push({ id: nextId, source: conceptId, target: parentId, relation });
   if (previous) mechanic.pinnedRuleIds = mechanic.pinnedRuleIds.filter((id) => id !== previous.id);
   if (nextId) {
     if (!mechanic.pinnedRuleIds.includes(nextId)) mechanic.pinnedRuleIds.push(nextId);
@@ -8761,6 +8795,7 @@ async function setIsaParent(draftId2, conceptId, parentOption) {
     draftId: draftId2,
     concept: conceptId,
     parent: parentId,
+    relation: parentId === null ? null : relation,
     changed: true,
     removedRuleId: previous?.id ?? null,
     addedRuleId: nextId,
@@ -8855,7 +8890,7 @@ async function saveDraft(id, validateOnly = false) {
   return withLock(async () => {
     const prepared = await prepareCandidate(id);
     const { folder: folder2, changes, data, exportSelection, target, counts } = prepared;
-    const summary = { contractVersion: 7, draftId: id, target, counts, exportSelection };
+    const summary = { contractVersion: WORKSPACE_TOOL_CONTRACT_VERSION, draftId: id, target, counts, exportSelection };
     if (validateOnly) return { ...summary, valid: true, dryRun: true, revision: data.revision };
     let verified;
     const warnings = [];
@@ -8955,7 +8990,7 @@ async function main() {
   if (command === "isa" && action === "set") {
     if (!options.draft) fail("TOOL_INVALID", "isa set 需要 --draft");
     if (!options.concept) fail("TOOL_INVALID", "isa set 需要 --concept");
-    return setIsaParent(options.draft, options.concept, options.parent);
+    return setIsaParent(options.draft, options.concept, options.parent, options.relation);
   }
   fail("TOOL_INVALID", "仅支持 guide、scopes/search/graph/node/impact、draft open|validate|save、isa set");
 }

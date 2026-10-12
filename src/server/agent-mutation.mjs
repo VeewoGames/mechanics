@@ -1,6 +1,6 @@
 import { assertSemanticId, semanticRuleId } from '../domain/identity.mjs';
 import { endpointProjectionId } from '../domain/endpoint-projection.mjs';
-import { setSpecializesParent } from '../domain/graph.mjs';
+import { isStructuralRelation, setStructuralParent } from '../domain/graph.mjs';
 import { ContractError, validateWorkspace } from '../domain/validate.mjs';
 
 const fail = (code, message, details = {}) => { throw Object.assign(new ContractError(code, message), details); };
@@ -142,15 +142,18 @@ function clearRemovedProjectionPositions(workspace, previousRules) {
   }
 }
 
-// is-a 的父概念只能整体替换出边：换边与各机制/视图 pinnedRuleIds 的清理必须同一次提交，
+// 结构父概念（is-a 或 part-of，二选一）只能整体替换出边：换边与各机制/视图 pinnedRuleIds 的清理必须同一次提交，
 // 否则删除被固定的旧规则而不同步清理，会让工作区在下次读取时以 MISSING_REFERENCE 失败。
-function replaceSpecializesParent(workspace, body, mechanic) {
+// 省略 relation 时按 specializes 写入，保持原有 set-parent 调用的含义。
+function replaceStructuralParent(workspace, body, mechanic) {
   const conceptId = requiredString(body, 'concept');
   if (!conceptById(workspace, conceptId)) fail('NODE_NOT_FOUND', `概念不存在：${conceptId}`);
+  const relation = has(body, 'relation') ? requiredString(body, 'relation') : 'specializes';
+  if (!isStructuralRelation(relation)) fail('AGENT_MUTATION_INVALID', 'rule set-parent 的 relation 必须是 specializes 或 part-of');
   const requested = body.parent === undefined || body.parent === null || body.parent === '' || body.parent === 'none' ? null : requiredString(body, 'parent');
-  if (requested && !conceptById(workspace, requested)) fail('NODE_NOT_FOUND', `is-a 父概念不存在：${requested}`);
+  if (requested && !conceptById(workspace, requested)) fail('NODE_NOT_FOUND', `结构父概念不存在：${requested}`);
   const before = new Set(workspace.rules.rules.map(rule => rule.id));
-  workspace.rules.rules = setSpecializesParent(workspace.rules.rules, conceptId, requested, { schemaVersion: workspace.rules.schemaVersion });
+  workspace.rules.rules = setStructuralParent(workspace.rules.rules, conceptId, requested, { relation, schemaVersion: workspace.rules.schemaVersion });
   const after = new Set(workspace.rules.rules.map(rule => rule.id));
   const removed = new Set([...before].filter(id => !after.has(id)));
   const added = [...after].filter(id => !before.has(id));
@@ -178,14 +181,14 @@ function mutateRule(workspace, body) {
   const actions = new Set(['add', 'update', 'delete', 'set-parent']);
   if (!actions.has(body.action)) fail('AGENT_MUTATION_INVALID', 'rule action 必须是 add、update、delete 或 set-parent');
   const writable = body.action === 'delete' ? ['mechanic', 'source', 'target', 'relation', 'sourceQualifiers', 'targetQualifiers']
-    : body.action === 'set-parent' ? ['mechanic', 'concept', 'parent']
+    : body.action === 'set-parent' ? ['mechanic', 'concept', 'parent', 'relation']
     : ['mechanic', 'source', 'target', 'relation', 'sign', 'ruleText', 'inheritance', 'sourceQualifiers', 'targetQualifiers', 'customData'];
   allowed(body, writable);
   const mechanicId = requiredString(body, 'mechanic');
   const mechanic = mechanicById(workspace, mechanicId);
   if (!mechanic) fail('SCOPE_NOT_FOUND', `机制不存在：${mechanicId}`);
   assertRevision(workspace, body, 'rules');
-  if (body.action === 'set-parent') return replaceSpecializesParent(workspace, body, mechanic);
+  if (body.action === 'set-parent') return replaceStructuralParent(workspace, body, mechanic);
   const source = requiredString(body, 'source'), target = requiredString(body, 'target');
   if (!conceptById(workspace, source) || !conceptById(workspace, target)) fail('NODE_NOT_FOUND', '规则端点必须是已存在的概念');
   const endpointRules = workspace.rules.rules.filter(edge => edge.source === source && edge.target === target);

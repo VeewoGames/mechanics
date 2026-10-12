@@ -132,7 +132,7 @@ export function createProjectManager({ onActivated = null, syncProjectAssets = r
       localUiState: createLocalUiState(context.workspaceRoot), agentEdit: { records: new Map(), queue: Promise.resolve() }, agentDraft: null };
     sessions.set(session.token, session); roots.set(rootKey(context.projectRoot), session); if (activate) activeToken = session.token;
     if (recordHistory && onActivated) await onActivated({ projectRoot: context.projectRoot, workspaceId: workspace.manifest.id, name: workspace.manifest.name });
-    scheduleAssetSync(session);
+    if (syncAssets) scheduleAssetSync(session);
     return attach(workspace, session);
   };
   const agentProject = async body => {
@@ -218,7 +218,7 @@ export function createProjectManager({ onActivated = null, syncProjectAssets = r
     readConceptDocs: async (conceptId, token) => { const session = current(token); return attach(await session.store.readCatalogBrowser(session.context, conceptId), session); },
     // 设置读取只消费 store 的会话快照，不应被其他项目操作排队。
     readDocumentExport: token => { const session = current(token); return session.store.documentExportStructure().then(result => attach(result, session)); },
-    save: body => call(body, store => store.save(body)), saveRulesAndMechanic: body => call(body, store => store.saveRulesAndMechanic(body)), saveConceptTaxonomy: body => call(body, store => store.saveConceptTaxonomy(body)), deleteGlobalRule: body => call(body, store => store.deleteGlobalRule(body)), removeMechanicNodes: body => call(body, store => store.removeMechanicNodes(body)), createMechanic: body => call(body, store => store.createMechanic(body)), createMechanicFolder: body => call(body, store => store.createMechanicFolder(body)), moveMechanic: body => call(body, store => store.moveMechanic(body)), moveMechanicFolder: body => call(body, store => store.moveMechanicFolder(body)), deleteMechanicFolder: body => call(body, store => store.deleteMechanicFolder(body)), deleteMechanic: body => call(body, store => store.deleteMechanic(body)), createView: body => call(body, store => store.createView(body)),
+    save: body => call(body, store => store.save(body)), saveRulesAndMechanic: body => call(body, store => store.saveRulesAndMechanic(body)), saveConceptTaxonomy: body => call(body, store => store.saveConceptTaxonomy(body)), deleteGlobalRule: body => call(body, store => store.deleteGlobalRule(body)), removeMechanicNodes: body => call(body, store => store.removeMechanicNodes(body)), createMechanic: body => call(body, store => store.createMechanic(body)), createMechanicFolder: body => call(body, store => store.createMechanicFolder(body)), moveMechanic: body => call(body, store => store.moveMechanic(body)), moveMechanicFolder: body => call(body, store => store.moveMechanicFolder(body)), deleteMechanicFolder: body => call(body, store => store.deleteMechanicFolder(body)), deleteMechanic: body => call(body, store => store.deleteMechanic(body)), createView: body => call(body, store => store.createView(body)), deleteView: body => call(body, store => store.deleteView(body)),
     openAgentEdit: body => enqueue(async () => {
       const session = await agentProject(body);
       if (typeof body?.mechanic !== 'string' || !body.mechanic) fail('AGENT_EDIT_SESSION_INVALID', '打开编辑会话必须提供机制 ID');

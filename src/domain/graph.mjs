@@ -29,8 +29,7 @@ export function composeProjection(workspace, { graphIds: selectedIds = [], focus
     })).sort((a, b) => a.id.localeCompare(b.id)),
   };
   assertReadGraphIntegrity(result, '合成投影');
-  assertSpecializes(result.edges);
-  assertPartOf(result.edges);
+  assertStructuralRelations(result.edges);
   return result;
 }
 
@@ -38,26 +37,45 @@ export function compose(workspace, selectedIds) {
   return composeProjection(workspace, { graphIds: selectedIds });
 }
 
-// 单父 is-a 的唯一写入口：先删掉该概念的全部 specializes 出边，再按需写入新父概念。
-// 纯函数，返回新数组；调用方必须在同一次校验里用 assertSpecializes 复核（自连与环都会被拒绝）。
-export function setSpecializesParent(rules, childId, parentId = null, { schemaVersion = 1 } = {}) {
-  const belongsToChild = rule => rule.relation === 'specializes' && rule.source === childId;
+// 结构关系只有两种：is-a（specializes，具体 → 上位）与 part-of（局部 → 整体）。
+// 每个概念至多一个结构父概念，关系类型二选一。
+export const STRUCTURAL_RELATIONS = Object.freeze(['specializes', 'part-of']);
+export const isStructuralRelation = relation => STRUCTURAL_RELATIONS.includes(relation);
+
+// 结构父概念的唯一写入口：先删掉该概念的全部结构出边（is-a 与 part-of 都删），再按需写入新父概念。
+// 同一父概念换关系类型也走这里。纯函数，返回新数组；调用方必须在同一次校验里用
+// assertStructuralRelations 复核（自连与环都会被拒绝）。
+export function setStructuralParent(rules, childId, parentId = null, { relation = 'specializes', schemaVersion = 1 } = {}) {
+  if (!isStructuralRelation(relation)) {
+    const error = new Error(`结构父概念的关系类型必须是 specializes 或 part-of：${String(relation)}`);
+    error.code = 'STRUCTURAL_RELATION_INVALID'; throw error;
+  }
+  const belongsToChild = rule => isStructuralRelation(rule.relation) && rule.source === childId;
   if (parentId === childId) {
-    const error = new Error(`概念 ${childId} 不能成为自己的 is-a 父概念`);
-    error.code = 'SPECIALIZES_SELF_LINK'; throw error;
+    const error = new Error(`概念 ${childId} 不能成为自己的${relation === 'part-of' ? ' part-of 整体' : ' is-a 父概念'}`);
+    error.code = relation === 'part-of' ? 'PART_OF_SELF_LINK' : 'SPECIALIZES_SELF_LINK'; throw error;
   }
-  const current = rules.find(belongsToChild);
+  const current = rules.filter(belongsToChild);
   if (parentId === null || parentId === undefined) {
-    return current ? rules.filter(rule => !belongsToChild(rule)) : rules;
+    return current.length ? rules.filter(rule => !belongsToChild(rule)) : rules;
   }
-  if (current?.target === parentId) return rules;
+  if (current.length === 1 && current[0].target === parentId && current[0].relation === relation) return rules;
+  if (relation === 'part-of' && schemaVersion < 2) {
+    const error = new Error('part-of 只允许写入 rules v2');
+    error.code = 'RELATION_REQUIRES_RULES_V2'; throw error;
+  }
   const remaining = rules.filter(rule => !belongsToChild(rule));
   let id;
   try { id = schemaVersion >= 2
-    ? semanticRuleId(childId, parentId, 'specializes', new Set(remaining.map(rule => rule.id)))
+    ? semanticRuleId(childId, parentId, relation, new Set(remaining.map(rule => rule.id)))
     : semanticRuleId(childId, parentId, new Set(remaining.map(rule => rule.id))); }
   catch (error) { error.code ??= 'DUPLICATE_ENDPOINT_RULE'; throw error; }
-  return [...remaining, { id, source: childId, target: parentId, relation: 'specializes' }];
+  return [...remaining, { id, source: childId, target: parentId, relation }];
+}
+
+// is-a 专用的便捷入口；同样会替换掉该概念原有的 part-of 出边。
+export function setSpecializesParent(rules, childId, parentId = null, { schemaVersion = 1 } = {}) {
+  return setStructuralParent(rules, childId, parentId, { relation: 'specializes', schemaVersion });
 }
 
 // specializes 沿“具体概念 → 上位概念”单向保持极性；分类关系必须无环。
@@ -95,9 +113,7 @@ export function assertSpecializes(edges) {
   for (const node of adjacent.keys()) visit(node);
 }
 
-// is-a 的 specializes 出边是「具体概念 → 父概念」，所以某概念**更具体**的后代要沿入边找。
-// 父概念候选必须排除自身与这些后代，否则选出的父概念会立刻形成分类环。
-// part-of 沿“局部 → 整体”声明稳定组成关系；允许多个整体，但禁止自连和有向环。
+// part-of 沿“局部 → 整体”声明稳定组成关系；禁止自连和有向环。
 // 它只提供结构上下文，不推导影响、继承或传递 part-of 事实。
 export function assertPartOf(edges) {
   const relations = edges.filter(edge => edge.relation === 'part-of');
@@ -124,6 +140,50 @@ export function assertPartOf(edges) {
   for (const node of adjacent.keys()) visit(node);
 }
 
+// 结构关系的统一断言：各自的自连、环与 is-a 单父仍由专用断言报告原有错误码；
+// 这里再保证每个概念只有一个结构父概念（is-a 与 part-of 二选一），且两种关系混合后仍无环。
+export function assertStructuralRelations(edges) {
+  assertSpecializes(edges);
+  assertPartOf(edges);
+  const parentByChild = new Map();
+  for (const edge of edges) if (isStructuralRelation(edge.relation)) {
+    const previous = parentByChild.get(edge.source);
+    if (previous) {
+      const error = new Error(`概念 ${edge.source} 只能有一个结构父概念（is-a 与 part-of 二选一）；规则 ${previous.id} 指向 ${previous.target}，规则 ${edge.id} 指向 ${edge.target}`);
+      error.code = 'STRUCTURAL_MULTIPLE_PARENTS';
+      error.details = { firstRuleId: previous.id, secondRuleId: edge.id }; throw error;
+    }
+    parentByChild.set(edge.source, edge);
+  }
+  // 单父之下每个概念只有一条上溯链；沿链重复访问即为混合环。
+  for (const start of parentByChild.keys()) {
+    const chain = [start];
+    for (let edge = parentByChild.get(start); edge; edge = parentByChild.get(edge.target)) {
+      if (chain.includes(edge.target)) {
+        const error = new Error(`is-a 与 part-of 混合形成结构环：${[...chain, edge.target].join(' → ')}`);
+        error.code = 'STRUCTURAL_CYCLE'; throw error;
+      }
+      chain.push(edge.target);
+    }
+  }
+}
+
+// 结构出边是「子概念 → 父概念」，所以某概念的结构后代要沿入边找（is-a 与 part-of 都算）。
+// 父概念候选必须排除自身与这些后代，否则选出的父概念会立刻形成结构环。
+export function structuralDescendants(rules, conceptId) {
+  const parents = rules.filter(rule => isStructuralRelation(rule.relation));
+  const result = new Set(), queue = [conceptId];
+  while (queue.length) {
+    const current = queue.pop();
+    for (const rule of parents) {
+      if (rule.target !== current || result.has(rule.source)) continue;
+      result.add(rule.source); queue.push(rule.source);
+    }
+  }
+  return result;
+}
+
+// 只沿 specializes 入边收集更具体的概念；供分类语义使用，不含 part-of。
 export function specializesDescendants(rules, conceptId) {
   const parents = rules.filter(rule => rule.relation === 'specializes');
   const result = new Set(), queue = [conceptId];
@@ -195,8 +255,7 @@ export function collapse(graph, nodeId) {
 }
 
 export function tracePaths(graph, source, target, { maxPaths = 50, maxDepth = 16, maxExpansions = 10000 } = {}) {
-  assertSpecializes(graph.edges);
-  assertPartOf(graph.edges);
+  assertStructuralRelations(graph.edges);
   if (!Number.isInteger(maxPaths) || maxPaths < 1 || !Number.isInteger(maxDepth) || maxDepth < 1) throw new Error('路径数量和深度上限必须是正整数');
   const ids = new Set(graph.nodes.map(node => node.id));
   if (!ids.has(source) || !ids.has(target)) throw new Error('查询端点不在当前组合中');

@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { GraphCanvas, badgeDisplayModel, badgeInteractionTargetId } from '../src/web/canvas.mjs';
+import { GraphCanvas, badgeDisplayModel, badgeInteractionTargetId, fitText, nodeChipLayout } from '../src/web/canvas.mjs';
 import { structuralProjection } from '../src/domain/taxonomy-presentation.mjs';
 
 const canonicalGraph = {
@@ -105,4 +105,26 @@ test('画布与路由请求共享同一显示投影：隐藏的 is-a 父概念�
   assert.deepEqual(canvas.graph.edges.map(edge => edge.id), ['child-affects-effect']);
   assert.deepEqual(requests.map(request => request.payload.graph.nodes.map(node => node.id)), [['child', 'effect']]);
   assert.equal(requests[0].geometryKey.includes('parent'), false, '几何签名不能带着隐藏父概念');
+});
+
+test('节点胶囊始终落在节点内宽里，放不下的标签合并为 +N 并保留完整文字', () => {
+  const inner = 166 - 12 * 2;
+  const withinBox = layout => [...layout.chips, ...(layout.more ? [layout.more] : [])].every(chip => chip.x >= 0 && chip.x + chip.width <= inner + .001);
+  assert.deepEqual(nodeChipLayout([]), { chips: [], more: null });
+
+  const single = nodeChipLayout([{ text: 'is-a：' + '很长的父概念名称'.repeat(4), title: '完整父概念' }]);
+  assert.equal(single.chips.length, 1); assert.equal(single.more, null);
+  assert.ok(single.chips[0].label.endsWith('…')); assert.ok(withinBox(single));
+
+  const many = nodeChipLayout([{ text: 'is-a：武器' }, ...['资源', '战斗', '成长', '经济', '随机', '核心循环'].map(text => ({ text, title: '标签：' + text }))]);
+  assert.equal(many.chips[0].label, 'is-a：武器', '结构标签排在最前且优先完整显示');
+  assert.ok(many.more.count > 0); assert.equal(many.chips.length + many.more.count, 7);
+  assert.match(many.more.text, /标签：核心循环$/);
+  assert.ok(withinBox(many));
+  for (const [index, chip] of many.chips.entries()) if (index) assert.ok(chip.x >= many.chips[index - 1].x + many.chips[index - 1].width, '胶囊不重叠');
+
+  assert.equal(fitText('短名', 142, 13), '短名');
+  const cut = fitText('一二三四五六七八九十一二三四五', 142, 13);
+  assert.ok(cut.endsWith('…') && [...cut].length <= 11);
+  assert.ok([...fitText('abcdefghijklmnop', 142, 13)].length === 16, '拉丁文字按实际宽度估算，不再固定截到 10 个字符');
 });

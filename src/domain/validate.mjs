@@ -1,5 +1,5 @@
 import Ajv from 'ajv';
-import { assertPartOf, assertSpecializes } from './graph.mjs';
+import { assertStructuralRelations } from './graph.mjs';
 import { registeredMechanicIds, visibleMechanicIds } from './view.mjs';
 import schema from '../../schemas/protocol.schema.json' with { type: 'json' };
 import { normalizeSearchTerm, semanticIdProblem, semanticRuleId } from './identity.mjs';
@@ -173,7 +173,7 @@ export function validateWorkspace({ manifest, definitions, rules, mechanics, vie
         `规则 ID 必须由端点和关系确定：${edge.id} 应为 ${expectedId}`);
   }
   unique(rules.rules, '规则库');
-  try { assertSpecializes(rules.rules); assertPartOf(rules.rules); }
+  try { assertStructuralRelations(rules.rules); }
   catch (error) {
     error.details = { resource: manifest.rules, field: 'rules', ...error.details };
     throw error;

@@ -12,26 +12,86 @@ const openProject = app.slice(app.indexOf('async function openProject()'), app.i
 const manageReferences = app.slice(app.indexOf('async function manageReferences()'), app.indexOf("$('new-graph').onclick"));
 
 test('打开项目默认先展示最近项目，不隐式唤起原生目录选择器', () => {
-  const initial = openProject.slice(0, openProject.indexOf('const draw = async () =>'));
-  assert.match(initial, /let preflight = null/);
-  assert.doesNotMatch(initial, /\/api\/directories\/pick/);
-  assert.match(openProject, /mode = 'recent'/);
-  assert.match(openProject, /if \(mode === 'recent'\)[\s\S]*?const history = await api\('\/api\/projects'\)/);
-  assert.match(openProject, /else root\.append\(folderPicker\(\{ initialPath: workspace\?\.projectRoot \?\? ''/);
+  // 原生选择器只挂在“打开文件夹…”按钮上，对话框打开时不直接请求。
+  assert.doesNotMatch(openProject, /\/api\/directories\/pick/);
+  assert.match(openProject, /const history = await api\('\/api\/projects'\)/);
+  assert.match(openProject, /folderPicker\(\{ initialPath: workspace\?\.projectRoot \?\? '', selectLabel: '打开文件夹…', onSelect: openProjectPath/);
 });
 
+test('打开项目是单面板：最近项目与选定文件夹都直接打开，没有页签或二次确认', () => {
+  assert.doesNotMatch(openProject, /preflight|project-dialog-tabs|重新选择|mode = '/);
+  assert.match(openProject, /button\('', \(\) => openProjectPath\(item\.projectRoot\), 'project-history-open'\)/);
+  assert.match(openProject, /\$\('confirm-dialog'\)\.hidden = true/);
+  // 打开失败保留对话框并就地报错，不关闭、不清空列表。
+  assert.match(openProject, /activateDirectory\(opened\); \$\('dialog'\)\.close\('ok'\);[\s\S]*?catch \(error\) \{[\s\S]*?reportProjectError\(error\);/);
+});
+
+test('侧栏可拖动调宽并只记在本机，视图可从侧栏与顶栏删除，「＋」随当前页新建', () => {
+  assert.match(html, /<\/aside>\s*<div id="sidebar-resizer" class="sidebar-resizer" role="separator" aria-orientation="vertical"/);
+  assert.match(style, /#sidebar\{width:var\(--sidebar-width,280px\)\}/);
+  assert.match(app, /document\.documentElement\.style\.setProperty\('--sidebar-width', next \+ 'px'\)/);
+  assert.match(app, /if \(persist\) saveUiPreference\(SIDEBAR_WIDTH_KEY, next\)/);
+  assert.match(app, /resizer\.ondblclick = \(\) => \{ sidebarWidth = applySidebarWidth\(SIDEBAR_WIDTH_DEFAULT, \{ persist: true \}\); \}/);
+  const deleteView = app.slice(app.indexOf('async function deleteViewDialog('), app.indexOf('async function moveMechanicToFolder('));
+  assert.match(deleteView, /if \(current && !await guard\(\)\) return;/);
+  assert.match(deleteView, /write\(revision => api\('\/api\/view-delete', \{ revision, viewId: id \}\)\)/);
+  // 删除当前视图后先丢弃它的自动保存目标，再打开仍存在的文件。
+  assert.match(deleteView, /autosave\.reset\(\); viewId = null;[\s\S]*?await load\(/);
+  assert.match(app, /iconAction\('trash', \(\) => deleteViewDialog\(item\.id\), 'icon-button resource-remove'\)/);
+  assert.match(app, /\$\('delete-mechanic'\)\.onclick = \(\) => \(viewMode\(\) \? deleteViewDialog\(\) : deleteMechanicDialog\(\)\)\.catch\(showError\)/);
+  assert.match(app, /\$\('resource-create'\)\.onclick = \(\) => \(sidebarState\.page === 'views' \? newView\(\) : newGraph\(\)\)\.catch\(showError\)/);
+  assert.match(app, /\$\('new-view'\)\.hidden = !legacy;/);
+  // 页面 CSP 禁止内联 style 属性：节点标签色必须经 CSSOM 写入。
+  assert.match(canvasSource, /background\.style\.setProperty\('--tag-color', chip\.color\)/);
+  assert.doesNotMatch(canvasSource, /setAttribute\('style'|style: `/);
+});
+
+test('目录打开不走领域打开接口，不解析默认图或恢复最近图', () => {
+  assert.match(openProject, /api\('\/api\/project\/directory', \{ projectRoot \}\)/);
+  assert.match(openProject, /activateDirectory\(opened\)/);
+  const directory = app.slice(app.indexOf('function activateDirectory('), app.indexOf('async function openDirectoryFile('));
+  assert.doesNotMatch(directory, /prepareOpening|\/api\/project\/open|restoreRecentState/);
+  assert.match(directory, /workspace = null/);
+  assert.match(directory, /renderSidebar\(\); renderProjectTabs\(\); updateStatus\(\)/);
+});
+
+test('图文件加载失败保留目录，并明确报告具体错误', async () => {
+  const source = app.slice(app.indexOf('async function openDirectoryFile('), app.indexOf('async function activateSourceProject('));
+  const directory = { navigationOnly: true, projectRoot: '/项目' }, errors = [];
+  const context = { opening: false, browserWorkspace: directory, updateStatus() {}, api: async () => { throw new Error('rules.json 损坏'); }, showError: error => errors.push(error) };
+  const open = runInNewContext(source + '\nopenDirectoryFile', context);
+  assert.equal(await open('broken.mechanic.json'), false);
+  assert.equal(context.browserWorkspace, directory);
+  assert.equal(context.opening, false);
+  assert.match(errors[0].message, /目录已打开.*项目数据或图文件加载失败：[\s\S]*rules.json 损坏/);
+});
+
+test('项目连接失败不刷新页面、不清空错误现场', async () => {
+  const source = app.slice(app.indexOf('async function api('), app.indexOf('// 所有页面写入串行执行'));
+  let reloaded = false;
+  const api = runInNewContext(source + '\napi', { API_REQUEST_TIMEOUT_MS: 15000, DIRECTORY_PICKER_REQUEST_TIMEOUT_MS: 610000,
+    AbortController, workspace: null, json: JSON.stringify, setTimeout: () => 1, clearTimeout() {},
+    fetch: async () => { throw new Error('连接断开'); }, location: { reload() { reloaded = true; } },
+  });
+  await assert.rejects(api('/api/project/directory', { projectRoot: '/项目' }), { code: 'PROJECT_OPEN_RESPONSE_LOST' });
+  assert.equal(reloaded, false);
+});
 
 test('概念详情的 is-a 开关是复选框，与颜色分区分离且只改各自文件的展开集合', () => {
-  assert.match(app, /if \(isARule && \(draft \|\| viewMode\(\)\)\) \{/);
+  assert.match(app, /if \(parentRule && \(draft \|\| viewMode\(\)\)\) \{/);
   // 复选框而不是按钮，并带上位概念提示。
   assert.match(app, /input\.type = 'checkbox'; input\.checked = expanded\.includes\(node\.id\);/);
   // 面板提供可搜索的 is-a 父概念选择器；清除不再有独立按钮，改由清空输入后就地确认。
-  assert.match(app, /section\.append\(el\('strong', 'is-a 父概念'\)\)/);
-  assert.match(app, /nodes: \(\) => isaParentCandidates\(workspace\.definitions\.nodes, workspace\.rules\.rules, node\.id\)/);
-  assert.match(app, /kind: 'isa', value: isARule\?\.target \?\? ''/);
-  assert.match(app, /onSelect: id => \{ void setConceptParent\(node\.id, id \?\? null\)/);
+  assert.match(app, /section\.append\(el\('strong', '结构父概念'\)\)/);
+  assert.match(app, /nodes: \(\) => structuralParentCandidates\(workspace\.definitions\.nodes, workspace\.rules\.rules, node\.id\)/);
+  assert.match(app, /kind: 'isa', value: parentRule\?\.target \?\? ''/);
+  // is-a 与 part-of 共用同一个父概念槽位：关系类型切换与选择器都走 setConceptParent。
+  assert.match(app, /relation\.value = parentRule\?\.relation \?\? 'specializes';/);
+  assert.match(app, /relation\.onchange = \(\) => \{ if \(parentRule\) void setConceptParent\(node\.id, parentRule\.target, relation\.value\)/);
+  assert.match(app, /onSelect: id => \{ void setConceptParent\(node\.id, id \?\? null, relation\.value\)/);
+  assert.match(app, /const nextRules = setStructuralParent\(beforeRules, conceptId, parentId, \{ relation, schemaVersion: workspace\.rules\.schemaVersion \}\);/);
   // 清除是候选列表第一项，不是独立按钮，也没有二次确认。
-  assert.match(app, /clearOption: '清除 is-a 父概念'/);
+  assert.match(app, /clearOption: '清除结构父概念'/);
   assert.doesNotMatch(app, /button\('清除/);
   assert.doesNotMatch(app, /requestClear|concept-reference-confirm/);
   // 更多具体的后代沿 specializes 入边算；曾顺出边遍历，把当前父概念当成后代过滤掉才会显示为空。
@@ -62,8 +122,8 @@ test('概念详情的 is-a 开关是复选框，与颜色分区分离且只改�
   assert.match(canvasSource, /edge\.relation !== 'influence'[\s\S]*?'stroke-dasharray'[\s\S]*?part-of/);
   assert.match(canvasSource, /const projection = this\.graph;/);
   // 新建/修改概念对话框都注入父概念候选，并通过同一条原子提交路径写入。
-  assert.match(app, /const parentCandidates = conceptId => isaParentCandidates\(workspace\.definitions\.nodes, workspace\.rules\.rules, conceptId\)/);
-  assert.match(app, /parentOptions: parentCandidates\(id\), parentId: workspace\.rules\.rules\.find/);
+  assert.match(app, /const parentCandidates = conceptId => structuralParentCandidates\(workspace\.definitions\.nodes, workspace\.rules\.rules, conceptId\)/);
+  assert.match(app, /parentOptions: parentCandidates\(id\), parentId: structuralParentRule\(id\)\?\.target \?\? null, parentRelation: structuralParentRule\(id\)\?\.relation \?\? 'specializes'/);
   assert.match(app, /parentOptions: parentCandidates\(null\),/);
   // 写入后必须重画：write() 只刷新侧栏，is-a 改动不重画就要用户自己刷新页面。
   const setParent = app.slice(app.indexOf('async function setConceptParent'), app.indexOf('async function setEdgeQualifiers'));
@@ -84,7 +144,7 @@ test('项目打开请求有超时，空项目错误可重新打开选择器', ()
   assert.ok(api.includes('finally { clearTimeout(timeout); }'));
   assert.ok(api.includes('CONNECTION_TIMEOUT'));
   assert.ok(app.includes("recovery.textContent = workspace ? '重新读取' : '重新打开项目';"));
-  assert.ok(app.includes("$('reload-error').onclick = () => (workspace ? refreshProjectFromDisk() : openProject()).catch(showError);"));
+  assert.ok(app.includes("$('reload-error').onclick = () => (browserWorkspace || workspace ? refreshProjectFromDisk() : openProject()).catch(showError);"));
 });
 
 test('原生窗口等待超过 15 秒仍能交付结果，普通读取仍会超时且失败后可重试', async () => {
@@ -177,11 +237,13 @@ test('操作控件使用统一 SVG 图标，关系记号仍作为领域信息保
   assert.match(app, /resourceIcon\.append\(icon\(kind === 'view' \? 'view' : 'mechanic'\)\)/);
   assert.match(app, /projectIcon\.append\(icon\(item\.pinned \? 'pin' : 'project'\)\)/);
   assert.match(html, /id="positive-tool"[^>]*>＋→<\/button>/);
-  // is-a 不用连线工具；工具条保留三种影响关系和 part-of 组成关系。
-  assert.match(html, /id="random-tool"[^>]*>？→<\/button>[\s\S]*?id="part-of-tool"[^>]*>◁→<\/button><\/div>/);
-  assert.doesNotMatch(html, /specializes-tool/);
-  assert.doesNotMatch(app, /specializes-tool/);
-  assert.match(app, /const relationMode = relation => relation === 'part-of' \? 'part-of' : relation === 'specializes' \? 'select' :/);
+  // 结构关系（is-a 与 part-of）都不用连线工具；工具条只保留三种影响关系。
+  assert.match(html, /id="random-tool"[^>]*>？→<\/button><\/div>/);
+  assert.doesNotMatch(html, /specializes-tool|part-of-tool/);
+  assert.doesNotMatch(app, /specializes-tool|part-of-tool/);
+  assert.match(app, /const relationMode = relation => isStructuralRelation\(relation\) \? 'select' :/);
+  assert.match(app, /if \(isStructuralRelation\(relation\)\) throw new Error\('结构关系不能用连线创建/);
+  assert.doesNotMatch(canvasSource, /this\.mode === 'part-of'/);
 });
 
 test('资源标签双击关闭，当前草稿仍通过既有确认流程处理', () => {

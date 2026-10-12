@@ -27,7 +27,8 @@ const viewDocument = (overrides = {}) => ({
 test('读取工作区时核心只校验一次，逐资源只做自身结构与引用校验', async () => {
   const source = await readFile(new URL('../src/server/workspace.mjs', import.meta.url), 'utf8');
   assert.match(source, /const core = workspaceValidationCore\(\{ manifest, definitions, rules \}\)/);
-  const loop = source.slice(source.indexOf('for (const item of compatible.mechanics)'), source.indexOf('const files = ['));
+  const start = source.indexOf('for (const item of compatible.mechanics)');
+  const loop = source.slice(start, source.indexOf('const files = [', start));
   assert.match(loop, /validateMechanicResource\(core, document, file\)/);
   assert.match(loop, /validateViewResource\(core, document, file\)/);
   assert.doesNotMatch(loop, /validateWorkspace\(/);

@@ -23,9 +23,9 @@ game-graph agent rule set-parent --project ./my-game --mechanic <投影机制ID>
 
 Agent 查询与 mutation 的完整参数见 [Agent 查询与受约束写入](Agent查询接口.md)。is-a 只由概念的「is-a 父概念」字段承担，网页节点面板与概念对话框、`mech agent rule set-parent`、项目内 `workspace-tool.mjs isa set` 是同一条关系的三个入口；画布连线只创建影响规则。
 
-`init` 可以在已有普通项目目录内创建 `.mechanics`，也可以创建尚不存在的项目目录；同时把安装包内的 `mechanics-search`、`mechanics-modeling`、`mechanics-doc` 三个受管 skill 注册到项目 `.agents/skills/`，把 `workspace-tool.mjs` 同步到 `.mechanics/tools/`。已有 `.mechanics` 时明确拒绝，不覆盖。目标 skill 不存在时安装；文件集合与内容完全相同时视为已注册；内容不同或含过期附件时用当前安装包的完整目录整体替换（暂存目录 → 备份 → 原子改名），Windows 短暂文件占用导致的 `EPERM`、`EACCES` 或 `EBUSY` 会有限退避重试（最多 8 次，等待间隔递增）；重试耗尽或其他中断报 `PROJECT_SKILL_REGISTRATION_PARTIAL`。源与目标文件清单按确定性路径顺序比较，保证同步幂等。只有路径被普通文件或符号链接占用时才在创建工作区前返回 `PROJECT_SKILL_CONFLICT`，绝不覆盖非受管路径。工作区 ID 默认取项目目录名，目录名不符合英文语义 kebab-case 时必须显式传 `--id`。
+`init` 可以在已有普通项目目录内创建 `.mechanics`，也可以创建尚不存在的项目目录；同时把安装包内的 `mechanics-search`、`mechanics-modeling`、`mechanics-doc` 三个受管 skill 注册到项目 `.agents/skills/`，把 `workspace-tool.mjs` 同步到 `.mechanics/tools/`。已有 `.mechanics` 时明确拒绝，不覆盖。目标 skill 不存在时安装；文件集合与内容完全相同时视为已注册；内容不同或含过期附件时用当前安装包的完整目录整体替换（暂存目录 → 备份 → 原子改名），Windows 短暂文件占用导致的 `EPERM`、`EACCES` 或 `EBUSY` 会有限退避重试（最多 8 次，等待间隔递增）；仅当旧目录尚未移动而改名因上述占用错误失败时，允许退回逐文件原子替换并回读，再清理过期受管文件，不删除目录；这不是多文件整体原子事务。其他中断或退路失败报 `PROJECT_SKILL_REGISTRATION_PARTIAL`，明确报告部分完成。源与目标文件清单按确定性路径顺序比较，保证同步幂等。只有路径被普通文件或符号链接占用时才在创建工作区前返回 `PROJECT_SKILL_CONFLICT`，绝不覆盖非受管路径。工作区 ID 默认取项目目录名，目录名不符合英文语义 kebab-case 时必须显式传 `--id`。
 
-`web` 省略 `--project` 时以空项目状态启动，网页可以打开项目；项目缺少 `.mechanics` 时按用户提供的名称和稳定 ID 初始化。`validate/catalog/root` 省略 `--project` 时从 cwd 向上寻找最近的 `.mechanics/workspace.json`。项目切换先完整打开候选并取得锁，成功后才替换当前项目；每次切换递增 `projectGeneration`，旧页面或旧在线 mutation 写入明确返回 `PROJECT_CHANGED`。
+`web` 省略 `--project` 时以空项目状态启动。网页「打开项目」与启动恢复仅枚举 `.mechanics` 目录，不解析 JSON、不迁移、不初始化、不同步技能，也不恢复默认/最近图。核心或单文件损坏仍可浏览；点击图文件或「加载项目数据／初始化」才建立领域会话，缺少工作区时按用户提供的名称和稳定 ID 初始化。加载失败保留目录与具体错误，目录投影本身不能编辑领域数据。`validate/catalog/root` 省略 `--project` 时从 cwd 向上寻找最近的 `.mechanics/workspace.json`。领域候选加载成功后才切换，旧页面或旧在线 mutation 写入由 `projectGeneration` 隔离并返回 `PROJECT_CHANGED`。
 
 `catalog` 从 canonical definitions/rules/mechanics 重建 Markdown-only Agent 读模型并回读验真。输出目录由 workspace v13 的 `agentExportPath` 指定，默认 `mechanics`；只包含生成的 `AGENTS.md`、`README.md`、唯一 `concepts.md` 与按实际机制目录生成的 `folders/<目录>/index.md`。文件夹只做机制图分类，不改变概念、规则或视图成员；目录通过生成指南确认归属，不接管或删除未知内容；旧 manifest/index/JSON 与逐概念读模型只在受控升级时清理。
 
@@ -37,7 +37,7 @@ Agent 查询与 mutation 的完整参数见 [Agent 查询与受约束写入](Age
 
 网页的「打开项目」支持 Windows 和 macOS 系统文件夹选择器。Windows 使用 FileOpenDialog 文件夹模式（逐显示器 DPI V2）；macOS 通过系统自带的 `osascript` 调用 AppKit NSOpenPanel，无需额外安装桌面运行时。选择器保留系统侧边导航、地址定位和搜索；macOS 只允许选择一个目录，指定的初始路径不存在或不是目录时明确报错。
 
-选择后继续项目预检与确认；取消或 Esc 不会切换或初始化项目。项目设置里的导出目录选择及关联项目使用同一原生入口，导出目录仍限制在当前项目内。原生入口仅允许本服务页面同源调用，一次只打开一个选择器；可等待用户选择最多 10 分钟，不受普通 API 的 15 秒超时限制。页面断开或服务关闭时中止选择，取消或失败后可重试。调用失败或未支持的平台明确报错，不自动改用网页目录树。
+选择后直接以目录浏览方式打开该项目，不再经过单独的确认面板；取消或 Esc 不会切换或初始化项目。项目设置里的导出目录选择及关联项目使用同一原生入口，导出目录仍限制在当前项目内。原生入口仅允许本服务页面同源调用，一次只打开一个选择器；可等待用户选择最多 10 分钟，不受普通 API 的 15 秒超时限制。页面断开或服务关闭时中止选择，取消或失败后可重试。调用失败或未支持的平台明确报错，不自动改用网页目录树。
 
 ```text
 my-game/
@@ -56,9 +56,9 @@ my-game/
     └── folders/<mechanic-folder>/index.md
 ```
 
-canonical 目录递归发现普通 `*.mechanic.json` 和 `*.view.json`。隐藏条目与 `node_modules` 排除；其他后缀不作为规则或视图。文件名和目录不是图 ID。外部移动文件后按稳定 ID 恢复引用；缺失来源、坏 JSON、重复 ID、越界路径、junction/符号链接或嵌套工作区都整体失败，不返回部分成功。
+canonical 目录递归发现普通 `*.mechanic.json` 和 `*.view.json`。隐藏条目与 `node_modules` 排除；其他后缀不作为规则或视图。文件名和目录不是图 ID。外部移动文件后按稳定 ID 恢复引用；严格领域读取与保存拒绝缺失来源、坏 JSON、重复 ID、越界路径、junction/符号链接和嵌套工作区。支持资源隔离的领域读取会把机制/视图读取、JSON 解析和资源校验错误记为 `resourceDiagnostics`，不伪造失败资源。独立目录浏览不解析这些文件，链接不跟随、无法读取路径逐项报告 diagnostics；可浏览不表示可保存。
 
-正式协议固定为 workspace v13、definitions v7、rules v1、mechanic v8、view v5。CLI 与网页只把当前版本当作可写合同：打开项目时所有仍有迁移路径的旧协议（v7–v12）自动逐级预览→执行迁移（任何一跳失败都不写入文件），更早或未知版本仅按核心拓扑兼容模式只读打开，结构编辑以 `COMPATIBILITY_READ_ONLY` 拒绝。也可用 `mech migrate --from <旧版本> --to <新版本> --project <项目目录>` 逐级预览并显式执行，或用 `mech migrate-project --project <项目目录> --execute` 一次完成旧根、旧 skill 与协议的链式升级。
+正式协议固定为 workspace v15、definitions v7、rules v2、mechanic v9、view v5，以 `schemas/protocol.schema.json` 为准。CLI 与网页只把当前版本当作可写合同：显式领域加载时（目录浏览不触发）所有仍有迁移路径的旧协议（v7–v14）自动逐级预览→执行迁移（任何一跳失败都不写入文件），更早或未知版本仅按核心拓扑兼容模式只读打开，结构编辑以 `COMPATIBILITY_READ_ONLY` 拒绝。也可用 `mech migrate --from <旧版本> --to <新版本> --project <项目目录>` 逐级预览并显式执行，或用 `mech migrate-project --project <项目目录> --execute` 一次完成旧根、旧 skill 与协议的链式升级。
 
 ## 制作可安装包
 

@@ -16,7 +16,7 @@ export function readingContract() {
       polarity: '正向影响在路径中保持变化方向，负向影响反转变化方向；两者不表示对玩家有利或有害，也不是实际效果量。',
       random: '随机影响可能使目标增加或减少；不表示概率、概率各半、随机数调用或条件分支。单条路径经过随机影响后保持随机。',
       specializes: 'specializes 是具体概念指向上位概念的 DAG 分类声明（is-a）；它不携带阵营、角色、目标等规则端限定词。查询会直接返回 is-a 边，但不会把分类边自动推导成 influence 影响。node 查询另外给出分类透传上下文：从子概念沿 is-a 上溯，列出每个上位概念及其自身的声明边与 is-a 路径（interpretation 为 classificationContextOnly）。该上下文只用于发现与阅读，子概念并不因此取得这些影响，也不参与正负号结论。',
-      partOf: 'part-of 是稳定局部指向整体的直接结构声明；允许一个局部属于多个整体，但禁止自连和有向环。它不携带限定词、方向或规则文字，不表示 is-a 或 influence，不做传递推导，也不参与 impact 的影响路径。node 的 composition 只返回直接组成声明。',
+      partOf: 'part-of 是稳定局部指向整体的直接结构声明；每个概念至多一个结构父概念，is-a 与 part-of 二选一，因此一个局部只属于一个整体；禁止自连和有向环（含与 is-a 混合成环）。它不携带限定词、方向或规则文字，不表示 is-a 或 influence，不做传递推导，也不参与 impact 的影响路径。node 的 composition 只返回直接组成声明。',
       derivedRules: 'retentionBindings 是一等配对事实，声明"哪个上限概念约束哪个资源概念"。只有显式 includeInherited 的 impact 或 node 查询才会由绑定生成派生边；派生边带 derived 与 origin（bindingId、mechanismConceptId、templateId），不落盘、不级联，且与作者声明的同端点规则不并存。未绑定的组合——包括两端各自的 is-a 特化交叉——永不派生。规则自身的 `inheritance.mode: specializeEndpoint` 只替换被声明的端点，且仅在显式请求时生效；同一后代存在多条等长特化路径时判为歧义并显式失败（SPECIALIZATION_AMBIGUOUS）。',
       ruleText: '适用条件直接写入规则文字，不设置独立条件字段。规则文字不参与结构推理或自动求值；未填写不证明无条件，多条路径也不证明同时成立。',
       inputs: '多条入边不编码 AND、OR、费用门槛或行动可执行性；宏观关联不证明每个成员都有相同效果。',

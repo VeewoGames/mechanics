@@ -92,12 +92,12 @@ mech agent view delete --view <ID> --workspace-revision <工作区版本>
 mech agent concept create --id <概念ID> --label <名称> --description <定义> [--custom-data <文本>] --revision <资源版本>
 mech agent concept update|delete --concept <概念ID> --revision <资源版本>
 mech agent rule add|update|delete --mechanic <投影机制ID> --source <概念ID> --target <概念ID> --revision <全局规则资源版本> [--relation influence|specializes|part-of] [--sign positive|negative|random] [--inheritance <JSON对象>] [--source-qualifiers <JSON数组>] [--target-qualifiers <JSON数组>] [--text <规则>] [--custom-data <文本>]
-mech agent rule set-parent --mechanic <投影机制ID> --concept <子概念ID> --parent <父概念ID|none> --revision <全局规则资源版本>（一次提交替换该概念的 is-a 出边并同步清理固定引用）
+mech agent rule set-parent --mechanic <投影机制ID> --concept <子概念ID> --parent <父概念ID|none> [--relation specializes|part-of] --revision <全局规则资源版本>（一次提交替换该概念唯一的结构出边并同步清理固定引用；省略 --relation 为 specializes）
   agent 通用：--project <项目目录> 或 --connect http://127.0.0.1:<端口>
     查询只输出 JSON；路径：--max-paths 50 --max-depth 16 --max-expansions 10000
   Agent 的 --project 只定位后台项目上下文，不切换网页当前标签。mechanic open 只解析目标：缺失时返回 create-required，不产生编辑会话；session open 仅会在提供 --previous-session 时异步关闭该旧会话；session close 会异步自动整理并回读，返回 jobId 后无需等待。新建机制文件夹和空机制图是容器准备操作，不需要 session；其余在线写入必须提供 session open 返回的 --session
   mechanic update/arrange 取 resourceRevisions.mechanics[机制ID]；concept mutation 取 resourceRevisions.definitions；rule mutation 取 resourceRevisions.rules；容器创建取 --workspace-revision= scopes.revision；在线写入还须 --project-generation
-  当前关系：influence 需 sign 与 inheritance；端点限定词只属于 influence 规则；specializes（is-a）与 part-of 都无 sign/inheritance/限定词；part-of 也无规则文字。每个概念至多一个 is-a 父概念，更换或清除请用 rule set-parent（不要用 delete + add 两次提交）
+  当前关系：influence 需 sign 与 inheritance；端点限定词只属于 influence 规则；specializes（is-a）与 part-of 都无 sign/inheritance/限定词；part-of 也无规则文字。每个概念至多一个结构父概念，is-a 与 part-of 二选一；更换、切换类型或清除请用 rule set-parent（不要用 delete + add 两次提交）
   Agent 只能创建受约束的机制文件夹/空白机制图，原子更新或安全删除机制、删除非当前视图，或调用与网页同算法的整图自动排版，或写概念与规则白名单字段；不能写入任意坐标、Agent 锁、视图结构、文件路径或原始机制元数据
 mech --help | --version
 

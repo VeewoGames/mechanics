@@ -2,7 +2,8 @@ import { lstat, mkdir, readFile, readdir, rm } from 'node:fs/promises';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { randomUUID } from 'node:crypto';
-import { renameWithRetry, writeExclusive } from './files.mjs';
+import { commitFile, renameWithRetry, writeExclusive } from './files.mjs';
+import { workspacePath } from './workspace.mjs';
 import { ContractError } from '../domain/validate.mjs';
 
 export const PROJECT_SKILL_DIRECTORY = '.agents/skills';
@@ -92,7 +93,27 @@ export async function preflightProjectSkills(projectRoot) {
   return { agentsRoot, skillsRoot, targets: await Promise.all(sources.map(skill => targetState(skillsRoot, skill))) };
 }
 
-export async function registerProjectSkills(projectRoot) {
+// Windows 的编辑器/索引器可能长期持有目录句柄而禁止整个目录改名。
+// 仅在旧目录尚未移动时退回逐文件原子替换；不是多文件原子事务，失败仍报告部分完成。
+async function updateSkillFiles(skill) {
+  await assertPlainDirectory(skill.root, '项目 skill');
+  const existing = await collectFiles(skill.root), wanted = new Set(skill.files.map(file => file.path));
+  for (const file of skill.files) {
+    const parts = file.path.split('/').slice(0, -1); let parent = skill.root;
+    for (const part of parts) { parent = resolve(parent, part); await ensureDirectory(parent, 'skill 子目录'); }
+    const path = await workspacePath(skill.root, file.path, { allowMissing: true, extensions: [''] });
+    const info = await statOrNull(path);
+    if (info && sameContent(await readFile(path, 'utf8'), file.content)) continue;
+    await commitFile(skill.root, file.path, file.content, { create: !info, extensions: [''] });
+  }
+  // 全部新内容已回读确认后才删除过期受管文件；不删除目录，以免再碰目录占用。
+  for (const file of existing.filter(path => !wanted.has(path))) {
+    const path = await workspacePath(skill.root, file, { extensions: [''] });
+    await rm(path);
+  }
+}
+
+export async function registerProjectSkills(projectRoot, { renameDirectory = renameWithRetry } = {}) {
   let plan = await preflightProjectSkills(projectRoot);
   await ensureDirectory(plan.agentsRoot, '项目 .agents'); await ensureDirectory(plan.skillsRoot, '项目 .agents/skills'); plan = await preflightProjectSkills(projectRoot);
   const installed = [];
@@ -102,7 +123,21 @@ export async function registerProjectSkills(projectRoot) {
       await mkdir(stagingRoot);
       for (const file of skill.files) { await mkdir(dirname(resolve(stagingRoot, file.path)), { recursive: true }); await writeExclusive(resolve(stagingRoot, file.path), file.content); }
       if (skill.state === 'missing') await renameWithRetry(stagingRoot, skill.root);
-      else { const backupRoot = resolve(plan.skillsRoot, `.${skill.name}.${randomUUID()}.backup`); await renameWithRetry(skill.root, backupRoot); try { await renameWithRetry(stagingRoot, skill.root); } catch (error) { await renameWithRetry(backupRoot, skill.root); throw error; } await rm(backupRoot, { recursive: true, force: true }); }
+      else {
+        const backupRoot = resolve(plan.skillsRoot, `.${skill.name}.${randomUUID()}.backup`);
+        let moved = false;
+        try { await renameDirectory(skill.root, backupRoot); moved = true; }
+        catch (error) {
+          if (!['EPERM', 'EACCES', 'EBUSY'].includes(error.code)) throw error;
+          await updateSkillFiles(skill);
+          await rm(stagingRoot, { recursive: true, force: true });
+        }
+        if (moved) {
+          try { await renameWithRetry(stagingRoot, skill.root); }
+          catch (error) { await renameWithRetry(backupRoot, skill.root); throw error; }
+          await rm(backupRoot, { recursive: true, force: true });
+        }
+      }
       installed.push(`${PROJECT_SKILL_DIRECTORY}/${skill.name}/SKILL.md`);
     } catch (error) { fail('PROJECT_SKILL_REGISTRATION_PARTIAL', `项目 skill 注册未完成；已安装：${installed.join('、') || '无'}；暂存目录：${stagingRoot}；${error.message}`, { installedSkills: installed, stagingRoot }); }
   }

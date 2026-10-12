@@ -35,12 +35,18 @@ test('共享编辑器用可搜索选择器指定 is-a 父概念，候选由调�
   assert.match(field, /placeholder: '输入名称、ID、别名或含义搜索父概念'/);
   assert.match(field, /picker\.input\.dataset\.editorField = 'parentId'/);
   assert.match(field, /onSelect: id => \{ this\.form\.parentId = id \?\? ''; \}/);
-  assert.match(field, /clearOption: '清除 is-a 父概念'/);
+  assert.match(field, /clearOption: '清除结构父概念'/);
   assert.doesNotMatch(field, /action\('清除'/);
-  assert.doesNotMatch(field, /el\(|element\('select'\)/);
+  assert.doesNotMatch(field, /el\(/);
+  // 父概念仍是可检索组合框；唯一的 <select> 是 is-a / part-of 关系类型切换。
+  assert.equal([...field.matchAll(/element\('select'\)/g)].length, 1);
+  assert.match(field, /relation = element\('select'\);\n    relation\.dataset\.editorField = 'parentRelation'/);
+  assert.match(field, /for \(const \[value, text\] of PARENT_RELATION_OPTIONS\)/);
+  assert.match(field, /relation\.onchange = \(\) => \{ this\.form\.parentRelation = relation\.value; \}/);
+  assert.match(glossary, /PARENT_RELATION_OPTIONS = Object\.freeze\(\[\['specializes', 'is-a（是一种）'\], \['part-of', 'part-of（是其组成部分）'\]\]\)/);
   // 没有候选来源时不渲染该字段，避免出现无法落盘的死控件。
   assert.match(glossary, /\.\.\.\(this\.parentOptions \? \[this\.parentField\(\)\] : \[\]\)/);
-  assert.match(glossary, /this\.form\.parentId = parentId \?\? '';/);
+  assert.match(glossary, /this\.form\.parentId = parentId \?\? ''; this\.form\.parentRelation = parentRelation === 'part-of' \? 'part-of' : 'specializes';/);
 });
 test('固定引用计算是纯函数：清理被删规则，显式投影补上新 is-a', () => {
   const helper = glossary.slice(glossary.indexOf('export function nextPinnedRuleIds'), glossary.indexOf('export function conceptReferencePickerCandidates'));
@@ -74,14 +80,14 @@ test('引用窗口把同名复用回调交给共享编辑器，且不创建候�
   const constructor = glossary.slice(glossary.indexOf('export class ConceptEditor'), glossary.indexOf('  field(', glossary.indexOf('export class ConceptEditor')));
   const picker = glossary.indexOf('export class ConceptPicker');
   const begin = glossary.slice(glossary.indexOf('  begin() {', picker), glossary.indexOf('  cancelForm() {', picker));
-  assert.match(constructor, /\{ mode, node, nodes, tagDefinitions = \[\], parentOptions = null, parentId = null, showActions = true, onSave, onCancel, onReuse \}/);
+  assert.match(constructor, /\{ mode, node, nodes, tagDefinitions = \[\], parentOptions = null, parentId = null, parentRelation = 'specializes', showActions = true, onSave, onCancel, onReuse \}/);
   assert.match(constructor, /Object\.assign\(this, \{ host, mode, nodes, tagDefinitions, parentOptions, showActions, onSave, onCancel, onReuse,/);
   assert.match(begin, /onReuse: id => \{ this\.session\.selected\.add\(id\); this\.cancelForm\(\); \}/);
   assert.doesNotMatch(begin, /session\.candidates\.push/);
 });
 
 test('对话框里的共享编辑器不重复渲染动作行', () => {
-  assert.match(glossary, /\{ mode, node, nodes, tagDefinitions = \[\], parentOptions = null, parentId = null, showActions = true, onSave, onCancel, onReuse \}/);
+  assert.match(glossary, /\{ mode, node, nodes, tagDefinitions = \[\], parentOptions = null, parentId = null, parentRelation = 'specializes', showActions = true, onSave, onCancel, onReuse \}/);
   assert.match(glossary, /\.\.\.\(this\.showActions \? \[actions\] : \[\]\)/);
   // 两个 app 对话框（修改概念、新增概念）都由底部按钮提交，编辑器不再画第二排按钮。
   assert.equal([...app.matchAll(/showActions: false/g)].length, 2);
@@ -125,11 +131,13 @@ test('引用窗口的新建候选同样可以指定 is-a，父概念随定义一
   const picker = glossary.slice(glossary.indexOf('export class ConceptPicker'), glossary.indexOf('// 名词表只是统一定义草稿的编辑视图'));
   assert.match(picker, /\{ status, recover = \(\) => \{\}, abandon = \(\) => \{\}, allowCreate = true, parentOptions = null \}/);
   assert.match(picker, /parentOptions: this\.parentOptions \? this\.parentOptions\(\) : null/);
-  assert.match(picker, /this\.session\.candidateParents\.set\(candidate\.id, form\.parentId\)/);
+  assert.match(picker, /this\.session\.candidateParents\.set\(candidate\.id, form\.parentId\); this\.session\.candidateParentRelations\.set\(candidate\.id, form\.parentRelation \?\? 'specializes'\)/);
   assert.match(picker, /this\.session\.candidateParents instanceof Map\) this\.session\.candidateParents\.delete\(id\)/);
   const reference = app.slice(app.indexOf('async function addNode'), app.indexOf('function mechanismFolderPath'));
   assert.match(reference, /parentOptions: \(\) => \[\.\.\.parentCandidates\(null\), \.\.\.session\.candidates\]/);
-  assert.match(reference, /nextRules = setSpecializesParent\(nextRules \?\? workspace\.rules\.rules, childId, parentId, \{ schemaVersion: workspace\.rules\.schemaVersion \}\)/);
-  assert.match(reference, /is-a 父概念不存在或未被本次引用/);
+  // 新建候选的关系类型（is-a 或 part-of）随父概念一起进入同一次提交。
+  assert.match(reference, /const relation = relations\.get\(childId\) \?\? 'specializes';/);
+  assert.match(reference, /nextRules = setStructuralParent\(nextRules \?\? workspace\.rules\.rules, childId, parentId, \{ relation, schemaVersion: workspace\.rules\.schemaVersion \}\)/);
+  assert.match(reference, /父概念不存在或未被本次引用/);
   assert.match(reference, /api\('\/api\/concept-taxonomy', \{ revision, definitions: document, rules: session\.commit\.plan\.rules \}\)/);
 });

@@ -1,12 +1,15 @@
-import { compose, specializesDescendants } from '../domain/graph.mjs';
+import { compose, isStructuralRelation, structuralDescendants } from '../domain/graph.mjs';
 import { assertSemanticId, normalizeAliases, normalizeSearchTerm } from '../domain/identity.mjs';
 import { icon } from './icons.mjs';
 
 const copy = value => structuredClone(value);
-// is-a 父概念候选：排除自身与更具体的后代（沿 specializes 入边，成环会被 domain 拒绝），
+// 结构父概念的关系类型：每个概念只有一个结构父概念，is-a 与 part-of 二选一。
+export const PARENT_RELATION_OPTIONS = Object.freeze([['specializes', 'is-a（是一种）'], ['part-of', 'part-of（是其组成部分）']]);
+export const parentRelationLabel = relation => relation === 'part-of' ? 'part-of' : 'is-a';
+// 结构父概念候选（is-a 与 part-of 共用）：排除自身与结构后代（沿两种结构关系的入边，成环会被 domain 拒绝），
 // 但绝不排除祖先——当前父概念必须留在候选里，才能显示为已选中。
-export function isaParentCandidates(nodes, rules, conceptId) {
-  const excluded = conceptId ? specializesDescendants(rules, conceptId) : new Set();
+export function structuralParentCandidates(nodes, rules, conceptId) {
+  const excluded = conceptId ? structuralDescendants(rules, conceptId) : new Set();
   if (conceptId) excluded.add(conceptId);
   return nodes.filter(node => !excluded.has(node.id));
 }
@@ -292,9 +295,9 @@ export function prepareReference({ workspace, draft, selected, candidates, rules
   if (mechanic.focusNodeIds.some(id => !ids.has(id))) throw new Error('待引用概念不存在，请重新核实定义。');
   Object.assign(mechanic.positions, referencePositions(positions, additions, center));
   compose({ ...workspace, definitions, mechanics: [mechanic] }, [mechanic.id]);
-  // 新概念的 is-a 父概念必须存在于本次提交的定义里；否则服务端会整体拒绝，不如在这里先给出中文原因。
-  if (rules) for (const rule of rules.rules.filter(item => item.relation === 'specializes' && candidates.some(node => node.id === item.source))) {
-    if (!ids.has(rule.target)) throw new Error('is-a 父概念不存在，请重新核实定义：' + rule.target);
+  // 新概念的结构父概念必须存在于本次提交的定义里；否则服务端会整体拒绝，不如在这里先给出中文原因。
+  if (rules) for (const rule of rules.rules.filter(item => isStructuralRelation(item.relation) && candidates.some(node => node.id === item.source))) {
+    if (!ids.has(rule.target)) throw new Error(parentRelationLabel(rule.relation) + ' 父概念不存在，请重新核实定义：' + rule.target);
   }
   return { definitions, mechanic, base: copy(base), candidates: copy(candidates), rules: rules ? copy(rules) : null, additions };
 }
@@ -349,10 +352,10 @@ const action = (text, run, className = 'quiet') => {
 
 
 export class ConceptEditor {
-  constructor(host, { mode, node, nodes, tagDefinitions = [], parentOptions = null, parentId = null, showActions = true, onSave, onCancel, onReuse }) {
+  constructor(host, { mode, node, nodes, tagDefinitions = [], parentOptions = null, parentId = null, parentRelation = 'specializes', showActions = true, onSave, onCancel, onReuse }) {
     const model = conceptEditorModel(mode, node); Object.assign(this, { host, mode, nodes, tagDefinitions, parentOptions, showActions, onSave, onCancel, onReuse, allowDuplicate: false, form: model.form });
-    // parentId 是 is-a 候选，不进入概念文档本身；只在调用方提供了可选父概念时才渲染控件。
-    this.form.parentId = parentId ?? '';
+    // parentId 与 parentRelation 描述结构父概念，不进入概念文档本身；只在调用方提供了可选父概念时才渲染控件。
+    this.form.parentId = parentId ?? ''; this.form.parentRelation = parentRelation === 'part-of' ? 'part-of' : 'specializes';
     this.root = element('section', undefined, 'concept-editor'); this.root.setAttribute('aria-label', model.title); host.replaceChildren(this.root); this.render();
     queueMicrotask(() => this.root.querySelector('[data-editor-field="' + model.firstField + '"]')?.focus());
   }
@@ -380,20 +383,25 @@ export class ConceptEditor {
     this.root.replaceChildren(title, identity, ...(this.parentOptions ? [this.parentField()] : []), discovery, customData, permission, error,
       ...(this.showActions ? [actions] : [])); this.drawDuplicates();
   }
-  // is-a 父概念是可检索的组合框：候选由调用方排除自身与更具体的后代后传入，
+  // 结构父概念是可检索的组合框加一个关系类型切换：候选由调用方排除自身与结构后代后传入，
   // 当前父概念留在候选里并显示为已选中；有当前值时列表首项就是清除，点它即清除，不做二次确认。
   parentField() {
-    const wrap = element('fieldset', undefined, 'concept-editor-taxonomy'); wrap.append(element('legend', 'is-a 父概念'));
+    const wrap = element('fieldset', undefined, 'concept-editor-taxonomy'); wrap.append(element('legend', '结构父概念'));
+    const relationField = element('label', undefined, 'field'), relation = element('select');
+    relation.dataset.editorField = 'parentRelation'; relation.setAttribute('aria-label', '结构关系类型');
+    for (const [value, text] of PARENT_RELATION_OPTIONS) { const option = element('option', text); option.value = value; relation.append(option); }
+    relation.value = this.form.parentRelation; relation.onchange = () => { this.form.parentRelation = relation.value; };
+    relationField.append(element('span', '关系类型'), relation);
     const field = element('label', undefined, 'field');
     const picker = new ConceptReferencePicker({
       nodes: () => this.parentOptions, currentId: this.form.id, kind: 'isa', value: this.form.parentId ?? '',
-      placeholder: '输入名称、ID、别名或含义搜索父概念', ariaLabel: 'is-a 父概念',
+      placeholder: '输入名称、ID、别名或含义搜索父概念', ariaLabel: '结构父概念',
       onSelect: id => { this.form.parentId = id ?? ''; },
-      clearOption: '清除 is-a 父概念',
+      clearOption: '清除结构父概念',
     });
     picker.input.dataset.editorField = 'parentId';
-    field.append(element('span', 'is-a 父概念'), picker.root);
-    wrap.append(field, element('p', '每个概念至多一个 is-a 父概念；方向是「具体概念 → 父概念」，更换时旧分类边被替换，自连与成环会被拒绝。', 'note'));
+    field.append(element('span', '父概念'), picker.root);
+    wrap.append(relationField, field, element('p', '每个概念至多一个结构父概念，is-a 与 part-of 二选一；is-a 方向是「具体概念 → 上位概念」，part-of 方向是「局部 → 整体」。更换或切换类型时旧结构边被替换，自连与成环会被拒绝。', 'note'));
     return wrap;
   }
   tagPicker() {
@@ -451,7 +459,7 @@ export class ConceptPicker {
     this.drawResults(); queueMicrotask(() => this.search.focus());
   }
   allNodes() { return [...this.definitions.nodes, ...this.session.candidates]; }
-  // 新建候选同样可以指定 is-a 父概念：候选每次打开表单时现取，已暂存的概念也能当父概念。
+  // 新建候选同样可以指定结构父概念（is-a 或 part-of）：候选每次打开表单时现取，已暂存的概念也能当父概念。
   begin() {
     const node = { id: '', label: this.session.query.trim(), aliases: '', description: '', tagIds: [], agentLocked: false };
     this.session.allowDuplicate = false;
@@ -468,8 +476,9 @@ export class ConceptPicker {
     if (sameNamedConcepts(this.allNodes(), form.label).length && !this.session.allowDuplicate) throw new Error('请复用已有概念，或明确勾选同名新建。');
     this.session.candidates.push(candidate); this.session.selected.add(candidate.id);
     if (!(this.session.candidateParents instanceof Map)) this.session.candidateParents = new Map();
-    if (form.parentId) this.session.candidateParents.set(candidate.id, form.parentId);
-    else this.session.candidateParents.delete(candidate.id);
+    if (!(this.session.candidateParentRelations instanceof Map)) this.session.candidateParentRelations = new Map();
+    if (form.parentId) { this.session.candidateParents.set(candidate.id, form.parentId); this.session.candidateParentRelations.set(candidate.id, form.parentRelation ?? 'specializes'); }
+    else { this.session.candidateParents.delete(candidate.id); this.session.candidateParentRelations.delete(candidate.id); }
     this.cancelForm();
   }
   drawResults() {
@@ -496,10 +505,12 @@ export class ConceptPicker {
       const node = this.allNodes().find(item => item.id === id);
       const parentId = this.session.candidateParents instanceof Map ? this.session.candidateParents.get(id) : null;
       const chip = element('span', undefined, 'concept-chip'); chip.append(element('span', node.label));
-      if (parentId) chip.append(element('small', 'is-a ' + (this.allNodes().find(item => item.id === parentId)?.label ?? parentId), 'concept-parent'));
+      const parentRelation = this.session.candidateParentRelations instanceof Map ? this.session.candidateParentRelations.get(id) : null;
+      if (parentId) chip.append(element('small', parentRelationLabel(parentRelation) + ' ' + (this.allNodes().find(item => item.id === parentId)?.label ?? parentId), 'concept-parent'));
       const remove = action('', () => {
         this.session.selected.delete(id); this.session.candidates = this.session.candidates.filter(item => item.id !== id);
         if (this.session.candidateParents instanceof Map) this.session.candidateParents.delete(id);
+        if (this.session.candidateParentRelations instanceof Map) this.session.candidateParentRelations.delete(id);
         this.drawResults();
       });
       remove.append(icon('close'));

@@ -3,6 +3,7 @@ import { readFile } from 'node:fs/promises';
 import { createRequire } from 'node:module';
 import { pathToFileURL } from 'node:url';
 import { createProjectManager } from './project-manager.mjs';
+import { readProjectMetadata, readWorkspaceDirectory } from './workspace.mjs';
 import { createPreferences } from './preferences.mjs';
 import { browseDirectories, createProjectHistory } from './local-projects.mjs';
 import { queryFromSearch } from './agent.mjs';
@@ -133,8 +134,8 @@ export async function startServer({ projectRoot = null, workspaceRoot = null, po
           send(200, await projects.readDocumentExport(url.searchParams.get('projectSessionToken') ?? undefined)); return;
         }
         if (request.method === 'GET' && url.pathname === '/api/preferences') { send(200, await preferences.read()); return; }
-        if (request.method === 'POST' && ['/api/directories/pick', '/api/project/open', '/api/project/select', '/api/project/reference-enter', '/api/project/settings', '/api/project/export-path', '/api/document-export/settings', '/api/document-export/generate', '/api/projects/pin',
-          '/api/projects/remove', '/api/save', '/api/rules-and-mechanic', '/api/concept-taxonomy', '/api/rules/delete', '/api/mechanic-nodes/remove', '/api/local-ui-state', '/api/project-references/bind', '/api/project-references/declare', '/api/project-references/remove', '/api/mechanics', '/api/mechanic-folders', '/api/mechanic-folder-move', '/api/mechanic-folder-delete', '/api/mechanic-move', '/api/mechanic-delete', '/api/views', '/api/preferences', '/api/agent/session', '/api/agent/mutation', '/api/agent/draft'].includes(url.pathname)) {
+        if (request.method === 'POST' && ['/api/directories/pick', '/api/project/metadata', '/api/project/directory', '/api/project/open', '/api/project/select', '/api/project/reference-enter', '/api/project/settings', '/api/project/export-path', '/api/document-export/settings', '/api/document-export/generate', '/api/projects/pin',
+          '/api/projects/remove', '/api/save', '/api/rules-and-mechanic', '/api/concept-taxonomy', '/api/rules/delete', '/api/mechanic-nodes/remove', '/api/local-ui-state', '/api/project-references/bind', '/api/project-references/declare', '/api/project-references/remove', '/api/mechanics', '/api/mechanic-folders', '/api/mechanic-folder-move', '/api/mechanic-folder-delete', '/api/mechanic-move', '/api/mechanic-delete', '/api/view-delete', '/api/views', '/api/preferences', '/api/agent/session', '/api/agent/mutation', '/api/agent/draft'].includes(url.pathname)) {
           if (!(request.headers['content-type'] ?? '').toLowerCase().startsWith('application/json')) {
             send(415, { error: 'JSON_REQUIRED', message: '写入必须使用 application/json' }); return;
           }
@@ -165,6 +166,8 @@ export async function startServer({ projectRoot = null, workspaceRoot = null, po
           if (url.pathname === '/api/project/reference-enter') { send(200, await projects.enterReference(body)); return; }
           if (url.pathname === '/api/projects/pin') { send(200, await projectHistory.pin(body)); return; }
           if (url.pathname === '/api/projects/remove') { send(200, await projectHistory.remove(body)); return; }
+          if (url.pathname === '/api/project/metadata') { send(200, await readProjectMetadata(body.projectRoot)); return; }
+          if (url.pathname === '/api/project/directory') { send(200, await readWorkspaceDirectory(body.projectRoot)); return; }
           if (url.pathname === '/api/project/open') { send(200, await projects.open(body)); return; }
           if (url.pathname === '/api/project/settings') { send(200, await projects.setProjectSettings(body)); return; }
           if (url.pathname === '/api/project/export-path') { send(200, await projects.setAgentExportPath(body)); return; }
@@ -190,6 +193,7 @@ export async function startServer({ projectRoot = null, workspaceRoot = null, po
           if (url.pathname === '/api/mechanic-folder-move') { send(200, await projects.moveMechanicFolder(body)); return; }
           if (url.pathname === '/api/mechanic-folder-delete') { send(200, await projects.deleteMechanicFolder(body)); return; }
           if (url.pathname === '/api/mechanic-delete') { send(200, await projects.deleteMechanic(body)); return; }
+          if (url.pathname === '/api/view-delete') { send(200, await projects.deleteView(body)); return; }
           send(200, await (url.pathname === '/api/save' ? projects.save(body) : url.pathname === '/api/views' ? projects.createView(body) : projects.createMechanic(body))); return;
         }
         send(405, { error: 'METHOD_NOT_ALLOWED', message: '此接口不支持该操作' }); return;

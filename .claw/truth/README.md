@@ -10,6 +10,7 @@
 - [CLI 与文件保存](features/cli-workspace-storage.md)：安装与资料分离、目录发现、产品/协议版本、保存门禁及验证范围。
 - [DSH 适配器与对话图卡](features/dsh-adapter-and-chat-widget.md)：项目工具版本、会话工作区定位、图卡挂载与分层验收。
 - [编辑器与图层](features/editor-navigation-and-layers.md)：概念表、机制图、草稿保存归属、最近视图与关联项目展示。
+- [目录浏览与领域加载分离决策](adr/2026-10-12-directory-browsing-domain-loading-boundary.md)：只读目录投影、逐资源读取隔离与连接失败保留现场。
 - [关联项目缺失处理决策](adr/2026-10-11-linked-project-fail-open.md)：共享声明与本机绑定分离、缺失目标隔离及发现入口边界。
 - [可取消后台计算与打开事务](features/async-compute-and-opening-transaction.md)：Worker 路由/排版、结果门禁与真实打开进度。
 - [端点限定词投影](features/endpoint-qualifier-projection.md)：规则的参与者范围、限定投影身份与「基础实例何时隐藏」。

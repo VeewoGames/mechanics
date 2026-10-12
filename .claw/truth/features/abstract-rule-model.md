@@ -1,7 +1,7 @@
 ﻿# 抽象游戏规则模型
 
 <!-- state: current -->
-## 当前行为
+## Current behavior
 
 - 工具分析抽象规则，不模拟实时战局。敌人促进近战、后撤步抑制近战，即可通过共享概念识别机制反制；不以前置实例绑定、某局体力或行动可用性判断作为查询条件。
 - 一个工作区只有一份 canonical 概念定义图。持久化概念、机制、视图和规则使用英文语义 ID，拒绝 UUID 与随机十六进制片段。概念可保存自然语言 aliases；别名不遮蔽 canonical ID，歧义别名返回全部候选。同名不同 ID 不合并，改名不改引用。
@@ -9,7 +9,9 @@
 - `specializes` 没有 sign，只沿 source → target 单向表达具体概念指向上位概念的分类声明；不反向、不跨兄弟、不建模禁止、数值或具体效果；方向决定集合算法——某概念的**后代**（更具体的概念）只能沿 specializes 的**入边**收集（`src/domain/graph.mjs` 的 `specializesDescendants`），**祖先**才沿出边上溯（`src/domain/query-paths.mjs` 的分类透传），按出边求「后代」得到的正好是祖先集合。每个概念至多一个父概念：同一 source 的第二条出边以 `SPECIALIZES_MULTIPLE_PARENTS` 显式失败，自连与成环仍分别以 `SPECIALIZES_SELF_LINK`、`SPECIALIZES_CYCLE` 失败（`src/domain/graph.mjs` 的 `assertSpecializes`）。is-a 的节点标签、虚线与展开集合都只从已保存关系派生，不能创建、替代或反推关系。分类路径不输出正负号，不落盘派生规则。is-a 只有一个写入口：概念的 is-a 父概念字段（网页的节点属性面板与概念对话框、`mech agent rule set-parent` 与项目内 `workspace-tool isa set` 都是它的实现面），画布连线不创建 is-a。父概念候选由 `src/web/glossary.mjs` 的 `isaParentCandidates` 给出：全部概念减去自身与 `specializesDescendants` 返回的真正后代，**绝不排除祖先**——当前父概念必须留在候选里才能显示为已选中的值；候选方向取反会同时造成「已有 is-a 父概念却显示为空」与「可选出必然成环的父概念」。界面与文档统一使用仓库既有的 is-a（父概念）表述，不另造字段名。更换与清除是「整体替换该概念唯一的 `specializes` 出边」的一次操作：`src/domain/graph.mjs` 的 `setSpecializesParent` 先删该概念全部 is-a 出边再按需写入新边，幂等，自连抛 `SPECIALIZES_SELF_LINK`、已存在端点对抛 `DUPLICATE_ENDPOINT_RULE`。
 - is-a 的更换与清除必须与受影响文件在同一次提交内落盘：`src/server/store.mjs` 的 `saveConceptTaxonomy`（`POST /api/concept-taxonomy`）在一次 `commitFiles` 中写 `rules`、受影响的 mechanics/views（清理被删规则的 `pinnedRuleIds`）与可选 `definitions`，失败整体回滚。分成两次提交会让被 `pinnedRuleIds` 固定的旧规则残留引用，工作区下次读取以 `MISSING_REFERENCE` 变成不可读。
 - 每条 `influence` 规则保存关系、符号、继承策略及可选 `ruleText`；一条作者声明的影响边是两个稳定概念之间的原子影响规则，而非执行步骤。适用条件、触发时机、数值和例外写在该边的规则文字，概念 `description` 定义稳定概念本身；文字不设独立 condition 字段，也不自动求值，方向与符号仍需符合文字。同一有向端点对的多个影响条件合入同一规则，而非拆成多条边。rules v2 的规则 ID 固定为 `<source>-2-<target>-<relation>`，唯一键是 `(source,target,relation)`；influence 可与一种结构关系同端点共存，但同端点不能同时声明 specializes 与 part-of。
-- `part-of` 沿 source（局部）→ target（整体）保存稳定组成关系：允许一个局部属于多个整体，禁止自连接与有向环；不携带 sign、inheritance、限定词或规则文字，不自动产生影响，也不做传递推导。`node` 的 `composition` 只返回直接局部和直接整体，`impact` 只遍历 influence。动态库存成员、临时持有、目录归属与流程步骤不属于 part-of。
+- `part-of` 沿 source（局部）→ target（整体）保存稳定组成关系：禁止自连接与有向环；不携带 sign、inheritance、限定词或规则文字，不自动产生影响，也不做传递推导。
+- 结构关系只有 `specializes`（is-a）与 `part-of` 两种，共用同一个结构父概念槽位：每个概念至多一条结构出边，二选一，因此一个局部只属于一个整体，也不能同时再有 is-a 父概念。第二条结构出边以 `STRUCTURAL_MULTIPLE_PARENTS` 失败（两条都是 specializes 时仍为 `SPECIALIZES_MULTIPLE_PARENTS`），两种关系混合成环以 `STRUCTURAL_CYCLE` 失败；断言 owner 是 `src/domain/graph.mjs` 的 `assertStructuralRelations`，唯一写入口是同文件的 `setStructuralParent(rules, childId, parentId, { relation, schemaVersion })`——先删该概念全部结构出边再按需写入，同一父概念切换关系类型也走它。网页的「结构父概念」字段（关系类型切换加父概念选择器）、Agent `rule set-parent [--relation specializes|part-of]` 与项目工具 `isa set [--relation …]` 都经由这一语义；画布连线只创建 influence。这是领域校验的收紧，文件结构与协议版本（workspace v15／rules v2）不变；0.10.1 写出的多整体或并存资料读取时明确失败，由作者取舍。
+- 结构关系的展示也共用一条通道：`src/domain/taxonomy-presentation.mjs` 默认隐藏两种结构边，只给子节点「is-a：…」或「part-of：…」标签，`taxonomyPresentation.expandedNodeIds` 按子概念 ID 展开对应虚线边。`node` 的 `composition` 只返回直接局部和直接整体，`impact` 只遍历 influence。动态库存成员、临时持有、目录归属与流程步骤不属于 part-of。
 - 建模先识别真实影响、再选端点，不把拥有、激活、检查条件、执行等纯流程步骤造为影响节点。条件读取不等于促进关系，例如“没有护盾才补盾”不推出“护盾促进补盾物品”；反之真实反馈状态对其他行为的抑制或促进应保留。普通中间概念若是可独立定义并承担共享资源、事件、反馈状态等机制职责，可保留；具体物品身份、合理终点和孤立焦点也不因单入单出而删除。机制图可含 `specializes` 分类边及无连线焦点，不必为连通虚构影响；图路径不计算文字条件，不能把有条件与无条件效果经伪路径混同。建模指引的维护源为 `skills/mechanics-modeling/SKILL.md`。
 - `node` 查询给出**分类透传上下文**（结果字段 `taxonomy`，`interpretation` 为 `classificationContextOnly`）：从子概念沿 `specializes` 上溯，列出每个上位概念及其自身的声明边与 is-a 路径。它是发现与阅读线索，不使子概念取得这些影响，也不参与正负号结论；含 is-a 步骤的路径本身仍不带符号。
 - 规则库可选 `retentionBindings`（`mechanismConceptId`／`resourceConceptId`／`capConceptId`）把配对升级为一等事实：同一资源或同一上限在全工作区只能绑定一次，资源与上限不能相同。**配对不能靠两端各自的 is-a 特化派生**——独立展开会得到交叉配对；只有显式 `--include-inherited` 的 `impact`／`node` 查询才由绑定生成带 `derived` 与 `origin` 的派生边，不落盘、不级联，并与作者声明的同端点规则不并存。分类透传与派生都由 `src/domain/query-paths.mjs` 计算，`src/domain/graph.mjs` 只处理作者声明的边。
@@ -27,7 +29,7 @@
 详细合同见 `docs/文件协议.md`、`docs/架构设计.md` 与 `docs/模型对agent的价值与优化讨论.md`。讨论中的优化不是已实现能力。
 
 <!-- state: history -->
-## 演进历史
+## Evolution history
 
 <!-- dated: 2026-09-23 -->
 ### is-a 后代方向与父概念候选修正

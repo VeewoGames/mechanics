@@ -368,6 +368,25 @@ export async function createWorkspaceStore(workspaceRoot, { isolateResources = f
     catch (error) { fail('AGENT_EXPORT_FAILED', '机制图已删除，但 Agent 机制文档发布失败：' + error.message,
       { canonicalCommitted: true, workspaceId: workspace.manifest.id, id: body.mechanicId }); }
   });
+  // 网页删除视图：视图只拥有组合与展示状态，删除不触碰任何机制、规则或概念。
+  // 与删除机制对称，workspace.json 中指向该视图的最近记录和导出选择在同一次提交中清理。
+  const deleteView = body => write(async () => {
+    const workspace = await current(body);
+    if (typeof body.viewId !== 'string') fail('VIEW_NOT_FOUND', '必须提供视图 ID');
+    const file = workspace.files.find(item => item.kind === 'view' && item.id === body.viewId);
+    if (!file) fail('VIEW_NOT_FOUND', '视图不存在：' + body.viewId);
+    let manifest = workspace.manifest;
+    if (manifest.lastView?.viewId === body.viewId) { const { lastView, ...rest } = manifest; manifest = rest; }
+    const selections = Array.isArray(manifest.exportSelections) ? manifest.exportSelections : null;
+    const remaining = selections?.filter(item => !(item.kind === 'view' && item.viewId === body.viewId));
+    if (selections !== null && remaining.length !== selections.length) manifest = { ...manifest, exportSelections: remaining };
+    const changes = [{ path: file.path, delete: true }];
+    if (manifest !== workspace.manifest) changes.push({ path: 'workspace.json', document: manifest });
+    await commitFiles(root, changes, { verify: () => readWorkspace(root) });
+    try { return await refreshCatalog(); }
+    catch (error) { fail('AGENT_EXPORT_FAILED', '视图已删除，但 Agent 机制文档发布失败：' + error.message,
+      { canonicalCommitted: true, workspaceId: workspace.manifest.id, id: body.viewId }); }
+  });
   const create = (kind, body) => write(async () => {
     const workspace = await current(body), document = body.document;
     assertDocument(document, kind);
@@ -951,6 +970,7 @@ export async function createWorkspaceStore(workspaceRoot, { isolateResources = f
     deleteMechanicFolder,
     deleteMechanic,
     createView: body => create('view', body),
+    deleteView,
     mutateAgent,
     saveAgentDraft,
     recipeMigration,
