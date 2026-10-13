@@ -246,12 +246,16 @@ test('操作控件使用统一 SVG 图标，关系记号仍作为领域信息保
   assert.doesNotMatch(canvasSource, /this\.mode === 'part-of'/);
 });
 
-test('资源标签单击立即切换，经 × 按钮或中键关闭，当前草稿仍通过既有确认流程处理', () => {
-  // 不再为识别双击而延迟单击：切换没有定时器，关闭有显式入口。
-  assert.doesNotMatch(app, /clickTimer/);
-  assert.match(app, /iconAction\('close', \(\) => closeEditorTab\(tab\)\.catch\(showError\), 'icon-button editor-tab-close'\)/);
-  assert.match(app, /wrap\.onauxclick = event => \{ if \(event\.button === 1\)/);
-  assert.match(html, /<header class="topbar">[\s\S]*?<div class="viewbar"><nav id="editor-tabs"[\s\S]*?<\/header>/);
+test('已打开文件并入侧栏「已打开」页：单击立即切换，经 × 或中键移除，满额时移出最久未用的一项', () => {
+  // 顶栏不再有标签条，侧栏第三个页签即已打开列表。
+  assert.doesNotMatch(html, /editor-tabs|class="viewbar"/);
+  assert.match(html, /id="recent-tab"[^>]*>已打开 <span id="recent-file-count">/);
+  assert.doesNotMatch(app, /clickTimer|promptEditorTabLimit|autoCloseEditorTabs/);
+  assert.match(app, /for \(const tab of editorTabs\) content\.append\(renderOpenTabRow\(tab\)\)/);
+  assert.match(app, /iconAction\('close', \(\) => closeEditorTab\(tab\)\.catch\(showError\), 'icon-button open-tab-close'\)/);
+  assert.match(app, /row\.onauxclick = event => \{ if \(event\.button === 1\)/);
+  // 列表保持打开顺序；淘汰按最近使用时间，不弹窗。
+  assert.match(app, /const oldest = editorTabs\.reduce\(\(least, tab\) => \(tab\.usedAt \?\? 0\) < \(least\.usedAt \?\? 0\) \? tab : least\)/);
   assert.match(app, /async function closeEditorTab\(tab\)/);
   assert.match(app, /if \(active && !await guard\(\)\) return/);
   assert.match(app, /editorTabs\.splice\(index, 1\)/);

@@ -132,6 +132,9 @@ kbd{font-family:var(--mono);font-size:var(--font-xs);opacity:.6;margin-left:8px}
 .resource-remove{color:var(--danger);opacity:0;pointer-events:none}
 .resource-row:hover .resource-remove,.resource-row:focus-within .resource-remove{opacity:1;pointer-events:auto}
 .resource-remove:hover{background:var(--danger-soft)!important;color:var(--danger)!important}
+/* 「已打开」页：文件标签并入侧栏，悬停或当前项显示移除按钮。 */
+.open-tab-close{margin-right:3px;opacity:0}
+.open-tab-row:hover .open-tab-close,.open-tab-row:focus-within .open-tab-close,.open-tab-row.current .open-tab-close{opacity:1}
 .resource-group-label{padding:12px 8px 4px;color:var(--ink-3);font-size:var(--font-xs);letter-spacing:.04em}
 .folder-toggle{display:flex;width:100%;align-items:center;gap:5px;overflow:hidden;border:0;background:transparent;padding:7px 8px;color:var(--ink-3);font-size:var(--font-s);text-align:left;text-overflow:ellipsis;white-space:nowrap}
 .folder-toggle:hover{background:transparent;color:var(--ink)}
@@ -198,19 +201,6 @@ kbd{font-family:var(--mono);font-size:var(--font-xs);opacity:.6;margin-left:8px}
 .view-switch button{border:0;background:transparent;padding:5px 12px;color:var(--ink-3);font-size:var(--font-s);white-space:nowrap}
 .view-switch button:hover{color:var(--ink)}
 .view-switch button.active{background:var(--surface);color:var(--ink);font-weight:600;box-shadow:var(--shadow-1)}
-.viewbar{display:flex;flex:1;min-width:0;height:100%;align-items:center;overflow:hidden}
-.editor-tabs{display:flex;align-items:center;gap:4px;min-width:0;overflow-x:auto;padding:0 2px;scrollbar-width:none}
-.editor-tab-item{display:flex;align-items:center;flex:none;max-width:210px;border-radius:7px;color:var(--ink-3)}
-.editor-tab-item:hover{background:var(--surface-2);color:var(--ink)}
-.editor-tab-item.is-active{background:var(--accent-soft);color:var(--accent-strong)}
-.editor-tab{display:flex;align-items:center;gap:6px;min-width:0;border:0;background:transparent;padding:6px 2px 6px 9px;color:inherit;font-size:var(--font-s)}
-.editor-tab:hover{background:transparent}
-.editor-tab.is-active{font-weight:600}
-.editor-tab .ui-icon{width:14px;height:14px}
-.editor-tab-name{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-button.editor-tab-close{width:20px;min-width:20px;height:20px;min-height:20px;margin:0 5px 0 1px;padding:3px;border-radius:5px;color:inherit;opacity:0}
-.editor-tab-item:hover .editor-tab-close,.editor-tab-item.is-active .editor-tab-close,.editor-tab-close:focus-visible{opacity:.65}
-button.editor-tab-close:hover{background:rgb(22 40 31 / .10);opacity:1}
 .header-actions{display:flex;flex:none;align-items:center;gap:8px;margin-left:auto;white-space:nowrap}
 #save-state{color:var(--ink-3);font-size:var(--font-s)}
 #legacy-notice{flex:none;padding:8px 16px;border-bottom:1px solid var(--warn-line);background:var(--warn-bg);color:var(--warn-ink);font-size:var(--font-s);line-height:1.7}
@@ -601,7 +591,6 @@ dialog:has(.project-dialog),dialog:has(.quick-open-search),dialog:has(.project-f
   .sidebar-resizer{display:none}
   body:not(.sidebar-hidden) .sidebar-scrim{display:block;position:fixed;inset:0 0 0 min(288px,calc(100vw - 48px));z-index:9;background:rgb(28 38 33 / .24);backdrop-filter:blur(1px)}
   .topbar{gap:6px;padding:0 8px}
-  .viewbar{display:none}
   #toolbar{bottom:44px;gap:1px}
   #tool-hint{display:none}
   #inspector,#main > #inspector{right:8px;width:240px}

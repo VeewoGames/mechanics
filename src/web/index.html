@@ -39,7 +39,7 @@
     <nav id="resource-tabs" class="resource-tabs" role="tablist" aria-label="资源类型">
       <button id="views-tab" role="tab" aria-selected="true" aria-controls="resource-panel">视图 <span id="view-file-count"></span></button>
       <button id="mechanics-tab" role="tab" aria-selected="false" aria-controls="resource-panel">机制库 <span id="mechanic-file-count"></span></button>
-      <button id="recent-tab" role="tab" aria-selected="false" aria-controls="resource-panel">最近打开 <span id="recent-file-count"></span></button>
+      <button id="recent-tab" role="tab" aria-selected="false" aria-controls="resource-panel">已打开 <span id="recent-file-count"></span></button>
     </nav>
     <section id="resource-panel" role="tabpanel" aria-live="polite">
       <strong id="resource-title" class="visually-hidden">视图</strong>
@@ -58,7 +58,6 @@
     <header class="topbar">
       <button id="toggle-sidebar" class="icon-button" title="切换文件侧栏" aria-label="切换文件侧栏"><svg class="ui-icon" aria-hidden="true"><use href="#icon-menu"/></svg></button>
         <div id="main-views" class="view-switch" role="group" aria-label="工作视图"><button id="table-view">概念表</button><button id="graph-view">机制图</button><button id="docs-view">文档</button></div>
-      <div class="viewbar"><nav id="editor-tabs" class="editor-tabs" aria-label="已打开资源"></nav></div>
       <div class="header-actions"><span id="save-state">本地文件</span><button id="delete-mechanic" class="quiet danger" hidden>删除机制图</button><button id="save" class="primary" disabled>保存 <kbd>Ctrl S</kbd></button><button id="new-view" hidden>新建视图</button></div>
     </header>
     <div id="legacy-notice" role="status" hidden>已保留旧叠加记录。请点击顶部“新建视图”完成迁移，或<button id="discard-legacy" class="quiet">放弃旧叠加</button>后打开机制。</div>

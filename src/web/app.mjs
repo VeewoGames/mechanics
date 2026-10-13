@@ -58,7 +58,7 @@ const EDITOR_TAB_LIMIT = 10;
 let referenceProjects = [];
 let referenceProjectsRevision = null;
 const editorTabs = [];
-let autoCloseEditorTabs = false;
+let editorTabClock = 0;
 let draggingMechanicId = null, dropPreview = null;
 const mergeDocumentExportWorkspace = next => {
   // 导出设置和生成都可能推进 workspace revision；只接受当前项目会话的完整成功快照。
@@ -70,7 +70,6 @@ const uiPreference = (key, fallback) => {
   try { const value = localStorage.getItem(key); return value === null ? fallback : value === 'true'; } catch { return fallback; }
 };
 const saveUiPreference = (key, value) => { try { localStorage.setItem(key, String(value)); } catch {} };
-autoCloseEditorTabs = uiPreference('mechanics:auto-close-editor-tabs', false);
 const persistTabState = () => persistRecentState();
 let inspectorCollapsed = uiPreference('mechanics:inspector-collapsed', false);
 let hoverTooltipsEnabled = uiPreference('mechanics:hover-tooltips-enabled', true);
@@ -220,42 +219,45 @@ function currentResourceDescriptor(candidate = null) {
   return { projectSessionToken: workspace.projectSessionToken, kind: targetView !== null ? 'view' : 'mechanic', id: targetId,
     name: targetView !== null ? workspace.views.find(item => item.id === targetView)?.name ?? targetView : workspace.mechanics.find(item => item.id === targetId)?.name ?? targetId };
 }
+const isActiveEditorTab = tab => tab.projectSessionToken === workspace?.projectSessionToken && tab.kind === (viewId !== null ? 'view' : 'mechanic') && tab.id === (viewId ?? activeId);
+// 已打开的文件就是侧栏的「已打开」页：顶栏不再有标签条，列表顺序保持打开顺序，切换不重排。
 function renderEditorTabs() {
-  const root = $('editor-tabs'); if (!root) return;
-  root.replaceChildren();
-  for (const tab of editorTabs) {
-    const active = tab.projectSessionToken === workspace?.projectSessionToken && tab.kind === (viewId !== null ? 'view' : 'mechanic') && tab.id === (viewId ?? activeId);
-    // 单击立即切换，不再为识别双击而延迟；关闭走显式的 × 按钮或鼠标中键。
-    const wrap = el('span', undefined, 'editor-tab-item' + (active ? ' is-active' : ''));
-    const item = button('', () => openEditorTab(tab).catch(showError), 'editor-tab' + (active ? ' is-active' : ''));
-    item.append(icon(tab.kind === 'view' ? 'view' : 'mechanic'), el('span', tab.name, 'editor-tab-name'));
-    item.title = `${tab.projectName} · ${tab.kind === 'view' ? '视图' : '机制'} · ${tab.id}`; item.setAttribute('aria-pressed', String(active));
-    const close = iconAction('close', () => closeEditorTab(tab).catch(showError), 'icon-button editor-tab-close');
-    close.title = `关闭标签：${tab.name}`; close.setAttribute('aria-label', close.title);
-    wrap.onauxclick = event => { if (event.button === 1) { event.preventDefault(); closeEditorTab(tab).catch(showError); } };
-    wrap.append(item, close); root.append(wrap);
-    if (active) queueMicrotask(() => wrap.scrollIntoView({ block: 'nearest', inline: 'nearest' }));
-  }
+  $('recent-file-count').textContent = editorTabs.length;
+  if (sidebarState.page === 'recent' && workspace && !browserWorkspace?.navigationOnly) renderSidebar();
+}
+function renderOpenTabRow(tab) {
+  const active = isActiveEditorTab(tab), kindLabel = tab.kind === 'view' ? '视图' : '机制';
+  const row = el('div', undefined, 'resource-row open-tab-row' + (active ? ' current' : ''));
+  const open = button('', async () => {
+    await openEditorTab(tab);
+    if (matchMedia('(max-width: 700px)').matches) closeSidebar();
+  }, 'resource-open');
+  open.title = `${tab.projectName} · ${kindLabel} · ${tab.id}`;
+  open.setAttribute('aria-label', `切换到${kindLabel} ${tab.name}`);
+  if (active) open.setAttribute('aria-current', 'page');
+  const copy = el('span', undefined, 'resource-copy'); copy.append(el('strong', tab.name));
+  // 只有来自关联项目的文件才标出所属项目，本项目文件保持单行。
+  if (tab.projectRoot?.toLowerCase() !== (sourceProject ?? workspace)?.projectRoot?.toLowerCase()) copy.append(el('small', tab.projectName));
+  const resourceIcon = el('span', undefined, 'resource-icon'); resourceIcon.append(icon(tab.kind === 'view' ? 'view' : 'mechanic')); open.append(resourceIcon, copy);
+  const close = iconAction('close', () => closeEditorTab(tab).catch(showError), 'icon-button open-tab-close');
+  close.title = `从已打开中移除：${tab.name}`; close.setAttribute('aria-label', close.title);
+  row.onauxclick = event => { if (event.button === 1) { event.preventDefault(); closeEditorTab(tab).catch(showError); } };
+  row.append(open, close);
+  return row;
 }
 function rememberEditorTab(candidate = null) {
   const descriptor = currentResourceDescriptor(candidate); if (!descriptor) return;
   const found = editorTabs.find(tab => tab.projectRoot?.toLowerCase() === workspace.projectRoot.toLowerCase() && tab.kind === descriptor.kind && tab.id === descriptor.id);
   if (!found && editorTabs.length >= EDITOR_TAB_LIMIT) {
-    if (autoCloseEditorTabs) editorTabs.shift();
-    else { void promptEditorTabLimit(); return; }
+    // 列表已满时移出最久没有切到的一项，不弹窗打断；被移出的只是快捷入口，文件本身不受影响。
+    const oldest = editorTabs.reduce((least, tab) => (tab.usedAt ?? 0) < (least.usedAt ?? 0) ? tab : least);
+    editorTabs.splice(editorTabs.indexOf(oldest), 1);
   }
-  if (!found) editorTabs.push({ ...descriptor, projectRoot: workspace.projectRoot, projectName: workspace.manifest.name });
-  else Object.assign(found, descriptor, { projectRoot: workspace.projectRoot, projectName: workspace.manifest.name });
+  const usedAt = ++editorTabClock;
+  if (!found) editorTabs.push({ ...descriptor, projectRoot: workspace.projectRoot, projectName: workspace.manifest.name, usedAt });
+  else Object.assign(found, descriptor, { projectRoot: workspace.projectRoot, projectName: workspace.manifest.name, usedAt });
   persistTabState();
   renderEditorTabs();
-}
-async function promptEditorTabLimit() {
-  let enabled = autoCloseEditorTabs;
-  await dialog(`已打开 ${EDITOR_TAB_LIMIT} 个文件标签`, container => {
-    container.append(el('p', `标签页最多保留 ${EDITOR_TAB_LIMIT} 个。请点击标签上的 × 关闭不再需要的文件后再打开新文件。`, 'note'));
-    const label = el('label', undefined, 'choice'), input = el('input'); input.type = 'checkbox'; input.checked = enabled;
-    input.onchange = () => { enabled = input.checked; }; label.append(input, el('span', '以后自动关闭最早打开的文件')); container.append(label);
-  }, () => { if (!enabled) return false; autoCloseEditorTabs = true; saveUiPreference('mechanics:auto-close-editor-tabs', true); persistTabState(); return true; }, '启用自动关闭');
 }
 async function openEditorTab(tab) {
   if (!workspace || !await guard()) return;
@@ -281,7 +283,7 @@ async function openEditorTab(tab) {
 async function closeEditorTab(tab) {
   const index = editorTabs.indexOf(tab);
   if (index < 0) return;
-  const active = tab.projectSessionToken === workspace?.projectSessionToken && tab.kind === (viewId !== null ? 'view' : 'mechanic') && tab.id === (viewId ?? activeId);
+  const active = isActiveEditorTab(tab);
   if (active && !await guard()) return;
   editorTabs.splice(index, 1); persistTabState(); renderEditorTabs();
   if (!active) return;
@@ -394,7 +396,6 @@ function write(operation, { blocking = true } = {}) {
 }
 function updateStatus() {
   document.body.classList.toggle('no-session', !workspace);
-  document.querySelector('.viewbar').hidden = definitionMode() || docsMode();
   $('breadcrumb').hidden = definitionMode() || docsMode();
   const table = definitionMode(), docs = docsMode();
   $('table-view').classList.toggle('active', table); $('graph-view').classList.toggle('active', !table && !docs); $('docs-view').classList.toggle('active', docs);
@@ -1070,11 +1071,9 @@ function renderSidebar() {
   for (const [id, selected] of [['views-tab', page === 'views'], ['mechanics-tab', page === 'mechanics'], ['recent-tab', page === 'recent']]) {
     $(id).setAttribute('aria-selected', String(selected)); $(id).tabIndex = selected ? 0 : -1;
   }
-  const recentViews = buildViewNavigation(draftWorkspace, { currentId: currentViewId, recentIds: sidebarState.recentViews }).items.filter(item => item.current || item.recent);
-  const recentMechanics = buildMechanicNavigation(draftWorkspace, { currentId: currentMechanicId, recentIds: sidebarState.recentMechanics }).featured;
-  $('recent-file-count').textContent = recentViews.length + recentMechanics.length;
+  $('recent-file-count').textContent = editorTabs.length;
   $('resource-tabs').hidden = false;
-  $('resource-title').textContent = sidebarState.detailViewId ? '视图内容' : page === 'views' ? '全部视图' : page === 'mechanics' ? '机制库' : '当前与最近';
+  $('resource-title').textContent = sidebarState.detailViewId ? '视图内容' : page === 'views' ? '全部视图' : page === 'mechanics' ? '机制库' : '已打开';
   // 「＋」跟随当前页：视图页新建空白视图，机制库新建机制；最近页与视图详情没有新建目标。
   $('resource-create').title = page === 'views' ? '新建视图' : '新建机制';
   $('resource-create').setAttribute('aria-label', $('resource-create').title);
@@ -1095,15 +1094,9 @@ function renderSidebar() {
     else renderMechanicTree(content, mechanics.tree);
     if (!mechanics.matchCount) content.append(el('p', mechanics.totalCount ? '没有匹配的机制。' : '还没有机制。', 'sidebar-empty'));
   } else {
-    if (recentViews.length) {
-      content.append(el('div', '视图', 'resource-group-label'));
-      for (const item of recentViews) content.append(renderResourceRow(item, 'view'));
-    }
-    if (recentMechanics.length) {
-      content.append(el('div', '机制', 'resource-group-label'));
-      for (const item of recentMechanics) content.append(renderResourceRow(item, 'mechanic'));
-    }
-    if (!recentViews.length && !recentMechanics.length) content.append(el('p', '还没有最近打开的视图或机制。', 'sidebar-empty'));
+    for (const tab of editorTabs) content.append(renderOpenTabRow(tab));
+    if (editorTabs.length) content.append(el('p', `最多保留 ${EDITOR_TAB_LIMIT} 个；满了会移出最久没切到的一项。`, 'sidebar-note'));
+    else content.append(el('p', '还没有打开的视图或机制。从「视图」或「机制库」打开后会出现在这里，方便来回切换。', 'sidebar-empty'));
   }
   if (browsing.resourceDiagnostics?.length) {
     content.append(el('div', '无法加载的文件', 'resource-group-label'));
