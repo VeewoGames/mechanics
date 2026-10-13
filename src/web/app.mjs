@@ -38,6 +38,12 @@ const button = (text, run, className) => {
 const iconAction = (name, run, className = 'icon-button') => {
   const item = button('', run, className); item.append(icon(name)); return item;
 };
+// 侧栏的补充说明不常驻占位：收成一个问号，悬停或聚焦时浮出文字。
+const helpTip = text => {
+  const item = el('button', undefined, 'help-tip'); item.type = 'button';
+  item.dataset.tip = text; item.setAttribute('aria-label', text); item.append(icon('help'));
+  return item;
+};
 function toggleWithKeyboard(event) {
   if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); event.currentTarget.click(); }
 }
@@ -953,7 +959,7 @@ function renderViewDetail(container, view) {
   summary.append(add, addConcept); container.append(summary);
   const removeView = button('删除视图', () => deleteViewDialog(source.id), 'quiet danger view-detail-delete'); removeView.prepend(icon('trash'));
   removeView.dataset.viewAction = 'delete-view'; removeView.disabled = busy() || !!autosave?.blocked; heading.append(removeView);
-  if (source.id !== viewId) container.append(el('p', '先打开此视图，才能修改 Visible、顺序和注册内容。', 'sidebar-note'));
+  if (source.id !== viewId) summary.append(helpTip('先打开此视图，才能修改 Visible、顺序和注册内容。'));
   const list = el('div', undefined, 'view-detail-members'); container.append(list);
   if (registrations.length > 8) {
     const search = el('input'); search.type = 'search'; search.value = sidebarState.memberQuery; search.placeholder = '筛选已注册机制'; search.className = 'member-search';
@@ -1028,7 +1034,8 @@ function renderSidebar() {
     const content = $('resource-content'); content.replaceChildren();
     const loadAll = button('加载项目数据', () => openDirectoryFile(), 'primary directory-load');
     loadAll.title = '解析项目 JSON 并进入编辑；缺少工作区时会明确要求初始化';
-    content.append(loadAll, el('p', '当前只是磁盘目录。点击图文件或上方按钮后才读取数据。', 'sidebar-note'));
+    const loadRow = el('div', undefined, 'sidebar-hint-row'); loadRow.append(loadAll, helpTip('当前只是磁盘目录。点击图文件或「加载项目数据」后才读取数据。'));
+    content.append(loadRow);
     // 目录投影沿用资源树的行样式；非图文件只作弱化的只读条目，不提供打开入口。
     const containers = new Map([['', content]]);
     for (const path of browsing.directories) {
@@ -1095,8 +1102,11 @@ function renderSidebar() {
     if (!mechanics.matchCount) content.append(el('p', mechanics.totalCount ? '没有匹配的机制。' : '还没有机制。', 'sidebar-empty'));
   } else {
     for (const tab of editorTabs) content.append(renderOpenTabRow(tab));
-    if (editorTabs.length) content.append(el('p', `最多保留 ${EDITOR_TAB_LIMIT} 个；满了会移出最久没切到的一项。`, 'sidebar-note'));
-    else content.append(el('p', '还没有打开的视图或机制。从「视图」或「机制库」打开后会出现在这里，方便来回切换。', 'sidebar-empty'));
+    if (editorTabs.length) {
+      const hint = el('div', undefined, 'sidebar-hint-row is-quiet');
+      hint.append(el('span', `${editorTabs.length} / ${EDITOR_TAB_LIMIT}`), helpTip(`最多保留 ${EDITOR_TAB_LIMIT} 个；满了会移出最久没切到的一项。`));
+      content.append(hint);
+    } else content.append(el('p', '还没有打开的视图或机制。从「视图」或「机制库」打开后会出现在这里，方便来回切换。', 'sidebar-empty'));
   }
   if (browsing.resourceDiagnostics?.length) {
     content.append(el('div', '无法加载的文件', 'resource-group-label'));
@@ -1256,6 +1266,20 @@ function inspect() {
   if (selection.type === 'diagnostics') {
     $('inspector-title').textContent = '结构提示';
     panel.append(el('p', '只分析当前可见图层。这些是设计疑点，不代表规则错误或实际战局结论。', 'note'));
+    // 起点/终点沿用画布按本地连线派生的角色；打开结构提示时它们会闪烁，这里给出图例与数量。
+    const roles = canvas.nodeRoles(), scopeLabel = viewMode() ? '当前视图' : '当前机制图';
+    const legend = el('button', undefined, 'role-legend'); legend.type = 'button'; legend.title = '再闪烁一次起点和终点';
+    const roleSections = [];
+    for (const [role, label, hint] of [['start', '起点', '只有影响出边'], ['end', '终点', '只有影响入边']]) {
+      const ids = [...roles].filter(([, value]) => value === 'node-' + role).map(([id]) => id);
+      const entry = el('span', undefined, 'role-legend-item role-' + role);
+      entry.append(el('i'), el('span', `${label} ${ids.length}`)); legend.append(entry);
+      const section = el('div', undefined, 'finding role-list role-' + role);
+      section.append(el('strong', `${scopeLabel}的${label}（${hint}）`), el('span', ids.length ? ids.map(name).join('、') : `没有${label}`));
+      roleSections.push(section);
+    }
+    legend.onclick = flashNodeRoles; panel.append(legend, ...roleSections);
+    panel.append(el('p', '以下是设计疑点：', 'note'));
     for (const finding of diagnose(original).findings) {
       const item = el('div', undefined, 'finding'); item.append(el('strong', finding.nodeIds.map(name).join('、')), el('span', finding.message)); panel.append(item);
     }
@@ -1982,7 +2006,12 @@ async function applyBrowsingWorkspace(opened, { restoreSourceState }) {
   // 附属状态读取在目录显示后后台执行；失败必须展示，不能只写控制台。
   const restoreNavigation = async () => {
     if (!restoreSourceState) return;
-    try { await restoreRecentState(); renderSidebar(); renderEditorTabs(); }
+    try {
+      await restoreRecentState();
+      // 恢复是后台进行的：其间已经打开的文件不在旧记录里，补回「已打开」，否则当前文件会从列表消失。
+      if (viewId !== null || activeId !== null) rememberEditorTab();
+      renderSidebar(); renderEditorTabs();
+    }
     catch (error) { showError(new Error('项目已打开，但最近记录未恢复：' + error.message)); }
   };
   // 最近记录可能把默认机制换成视图（或反向）；模式必须与最终候选快照一起切换。
@@ -2498,7 +2527,15 @@ $('toggle-inspector').onclick = () => {
   inspectorCollapsed = !inspectorCollapsed;
   saveUiPreference('mechanics:inspector-collapsed', inspectorCollapsed); inspect();
 };
-$('diagnostics').onclick = () => { selection = { type: 'diagnostics' }; inspect(); };
+// 起点（只有出边）与终点（只有入边）各闪烁几下，样式不同；只是画布上的临时提示，不改选择、不写文件。
+let roleFlashTimer = null;
+function flashNodeRoles() {
+  const root = $('canvas');
+  root.classList.remove('flash-roles'); void root.getBoundingClientRect();
+  root.classList.add('flash-roles'); clearTimeout(roleFlashTimer);
+  roleFlashTimer = setTimeout(() => root.classList.remove('flash-roles'), 2400);
+}
+$('diagnostics').onclick = () => { selection = { type: 'diagnostics' }; inspect(); flashNodeRoles(); };
 $('dismiss-error').onclick = () => { $('error').hidden = true; };
 $('close-dialog').onclick = $('cancel-dialog').onclick = () => $('dialog').close('cancel');
 for (const [mode, relation] of [['positive', 1], ['negative', -1], ['random', 'random']]) {

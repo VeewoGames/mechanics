@@ -46,6 +46,22 @@ test('侧栏可拖动调宽并只记在本机，视图可从侧栏与顶栏删�
   assert.doesNotMatch(canvasSource, /setAttribute\('style'|style: `/);
 });
 
+test('结构提示让起点和终点各自闪烁，样式不同，且只是临时画布提示', () => {
+  assert.match(app, /\$\('diagnostics'\)\.onclick = \(\) => \{ selection = \{ type: 'diagnostics' \}; inspect\(\); flashNodeRoles\(\); \};/);
+  const flash = app.slice(app.indexOf('function flashNodeRoles()'), app.indexOf("$('diagnostics').onclick"));
+  assert.match(flash, /root\.classList\.add\('flash-roles'\)/);
+  assert.match(flash, /setTimeout\(\(\) => root\.classList\.remove\('flash-roles'\), 2400\)/);
+  assert.doesNotMatch(flash, /write\(|edit\(|selection =/);
+  assert.match(style, /#canvas\.flash-roles \.node\.node-start rect\{animation:role-flash-start \.75s ease-in-out 3\}/);
+  assert.match(style, /#canvas\.flash-roles \.node\.node-end rect\{animation:role-flash-end \.75s ease-in-out 3\}/);
+  // 终点用虚线框，起点用实线框：区分不只靠颜色。
+  assert.match(style, /@keyframes role-flash-end\{50%\{[^}]*stroke-dasharray:9 5\}\}/);
+  assert.doesNotMatch(style.match(/@keyframes role-flash-start\{[^@]*?\}\}/)[0], /dasharray/);
+  // 侧栏补充说明收成问号提示，不再常驻占位。
+  assert.doesNotMatch(app, /'sidebar-note'/);
+  assert.match(app, /const helpTip = text =>/);
+});
+
 test('目录打开不走领域打开接口，不解析默认图或恢复最近图', () => {
   assert.match(openProject, /api\('\/api\/project\/directory', \{ projectRoot \}\)/);
   assert.match(openProject, /activateDirectory\(opened\)/);

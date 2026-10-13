@@ -11,6 +11,7 @@
   --ink:#1c2621;--ink-2:#46524c;--ink-3:#6b7770;--ink-4:#9aa39d;
   --accent:#2f6b57;--accent-strong:#245544;--accent-soft:#e3efe9;--accent-line:#9cc0b0;
   --positive:#2d8272;--negative:#bf5f4e;--random:#7d62b0;--specializes:#a8801a;--part-of:#3f7391;--empty-rule:#9a9fa6;
+  --role-start:#1f8a6d;--role-start-soft:#d9f2e8;--role-end:#d07f1c;--role-end-soft:#fdebd0;
   --danger:#b4523f;--danger-soft:#f8ebe7;
   --warn-bg:#fff8ea;--warn-line:#ecd9ae;--warn-ink:#7a5a1e;
   --radius-s:6px;--radius-m:8px;--radius-l:12px;
@@ -150,7 +151,16 @@ kbd{font-family:var(--mono);font-size:var(--font-xs);opacity:.6;margin-left:8px}
 .resource-row.is-dragging{opacity:.45}
 .sidebar-empty{margin:8px 8px 10px;color:var(--ink-3);font-size:var(--font-s);line-height:1.8}
 .sidebar-empty button{display:block;padding:3px 0;color:var(--accent)}
-.sidebar-note{margin:8px 8px 12px;color:var(--ink-3);font-size:var(--font-s);line-height:1.6}
+/* 补充说明收成问号：悬停或键盘聚焦时浮出，不常驻占位。 */
+.sidebar-hint-row{display:flex;align-items:center;gap:4px;margin:2px}
+.sidebar-hint-row .directory-load{flex:1;width:auto;margin:0}
+.sidebar-hint-row.is-quiet{justify-content:flex-end;margin:6px 4px 0;color:var(--ink-4);font-size:var(--font-xs)}
+button.help-tip{position:relative;display:inline-flex;flex:none;align-items:center;justify-content:center;width:24px;height:24px;padding:0;border:0;border-radius:50%;background:transparent;color:var(--ink-4);cursor:help}
+button.help-tip:hover,button.help-tip:focus-visible{background:var(--surface-3);color:var(--ink-2)}
+.help-tip .ui-icon{width:15px;height:15px}
+.help-tip::after{content:attr(data-tip);position:absolute;top:calc(100% + 6px);right:0;z-index:20;width:max-content;max-width:220px;padding:8px 10px;border-radius:var(--radius-m);background:#1c2621f2;box-shadow:var(--shadow-2);color:#fff;font-size:var(--font-s);font-weight:400;line-height:1.6;text-align:left;white-space:normal;opacity:0;visibility:hidden;transition:opacity .12s;pointer-events:none}
+.help-tip:hover::after,.help-tip:focus-visible::after{opacity:1;visibility:visible}
+.view-detail-summary .help-tip{margin-left:auto}
 
 /* 视图详情：成员、显隐与顺序 */
 .view-detail-heading{display:flex;flex-wrap:wrap;align-items:center;padding:2px 4px 8px}
@@ -291,6 +301,11 @@ button.tool{height:34px;min-width:34px;padding:4px 8px;border:0;border-radius:7p
 .node .node-chip-more text.node-chip-text{fill:var(--ink-3)}
 .node-chip.is-link{pointer-events:auto;cursor:pointer}
 .node-chip.is-link:hover .node-chip-shape,.node-chip.is-link:focus-visible .node-chip-shape{fill:var(--accent-soft);stroke:var(--accent)}
+/* 结构提示：起点闪实线绿框，终点闪虚线橙框，各三次；形状与颜色都不同，不只靠颜色区分。 */
+@keyframes role-flash-start{50%{fill:var(--role-start-soft);stroke:var(--role-start);stroke-width:4}}
+@keyframes role-flash-end{50%{fill:var(--role-end-soft);stroke:var(--role-end);stroke-width:4;stroke-dasharray:9 5}}
+#canvas.flash-roles .node.node-start rect{animation:role-flash-start .75s ease-in-out 3}
+#canvas.flash-roles .node.node-end rect{animation:role-flash-end .75s ease-in-out 3}
 .edge-line{fill:none;stroke-width:1.8}
 .edge-line.selected{stroke-width:3;opacity:1}
 .edge-hit{fill:none;stroke:transparent;stroke-width:15;cursor:pointer}
@@ -326,6 +341,14 @@ button.tool{height:34px;min-width:34px;padding:4px 8px;border:0;border-radius:7p
 .detail p{margin:5px 0;color:var(--ink-3);font-size:var(--font-s);white-space:pre-wrap;overflow-wrap:anywhere}
 .trace-result{margin-top:12px;color:var(--ink-2);font-size:var(--font-s);white-space:pre-wrap}
 .trace-path{margin:12px 0;padding-left:10px;border-left:2px solid var(--accent-line);line-height:1.8}
+button.role-legend{display:flex;align-items:center;gap:14px;width:100%;margin:10px 0 2px;padding:7px 10px;border-color:var(--line);background:var(--surface-2);color:var(--ink-2);font-size:var(--font-s)}
+.role-legend-item{display:inline-flex;align-items:center;gap:6px}
+.role-legend-item i{width:18px;height:12px;border-radius:3px}
+.role-legend-item.role-start i{border:2px solid var(--role-start);background:var(--role-start-soft)}
+.role-legend-item.role-end i{border:2px dashed var(--role-end);background:var(--role-end-soft)}
+.role-list{border-top:0!important;padding:6px 0 2px 10px!important;border-left:3px solid var(--role-start)}
+.role-list.role-end{border-left:3px dashed var(--role-end)}
+.role-list+.note{margin:12px 0 0}
 .finding{padding:10px 0;border-top:1px solid var(--line);font-size:var(--font-s)}
 .finding strong{display:block;margin-bottom:4px;color:var(--ink)}
 .finding span{color:var(--ink-3);line-height:1.8}

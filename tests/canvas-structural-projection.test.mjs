@@ -107,6 +107,23 @@ test('画布与路由请求共享同一显示投影：隐藏的 is-a 父概念�
   assert.equal(requests[0].geometryKey.includes('parent'), false, '几何签名不能带着隐藏父概念');
 });
 
+test('起点终点只按当前画布这张图的影响连线判定，结构关系与自连接不参与', () => {
+  const nodes = ['a', 'b', 'c', 'd', 'parent'].map(id => ({ id, label: id }));
+  const edges = [
+    { source: 'a', target: 'b', relation: 'influence', steps: [{ ruleId: 'r1' }] },
+    { source: 'b', target: 'c', relation: 'influence', steps: [{ ruleId: 'r2' }] },
+    { source: 'a', target: 'parent', relation: 'specializes', steps: [{ ruleId: 'r3' }] },
+    { source: 'd', target: 'd', relation: 'influence', steps: [{ ruleId: 'r4' }] },
+    { source: 'c', target: 'a', relation: 'influence', steps: [{ ruleId: 'r5', graphId: 'other' }] },
+  ];
+  const roles = activeId => Object.fromEntries(GraphCanvas.prototype.nodeRoles.call({ activeId, graph: { nodes, edges } }));
+  // 规则是全局资源，普通连线不带来源图 ID；单张机制图里照样能判定出起点和终点。
+  assert.deepEqual(roles('mechanic'), { a: 'node-start', b: '', c: 'node-end', d: '', parent: '' });
+  // 视图里所有可见影响连线都算数：c→a 闭合成环后不再有起点和终点。
+  assert.deepEqual(roles(null), { a: '', b: '', c: '', d: '', parent: '' });
+  assert.deepEqual([...GraphCanvas.prototype.nodeRoles.call({ activeId: null, graph: null })], []);
+});
+
 test('节点胶囊始终落在节点内宽里，放不下的标签合并为 +N 并保留完整文字', () => {
   const inner = 166 - 12 * 2;
   const withinBox = layout => [...layout.chips, ...(layout.more ? [layout.more] : [])].every(chip => chip.x >= 0 && chip.x + chip.width <= inner + .001);

@@ -2337,6 +2337,23 @@ export class GraphCanvas {
     this.camera.y = y - (y - this.camera.y) * next / old;
     this.camera.scale = next; this.transform();
   }
+  // 起点/终点只看当前画布正在显示的这张图（机制图或视图）里的影响连线：只有出边为起点，只有入边为终点。
+  // is-a、part-of 这类结构关系不描述影响流向，不参与；结果不写入 canonical。画布着色与结构提示面板共用这一份判定。
+  nodeRoles() {
+    const projection = this.graph ?? { nodes: [], edges: [] };
+    const directions = new Map(projection.nodes.map(node => [node.id, { incoming: false, outgoing: false }]));
+    // 规则已是全局资源，普通连线的 steps 不带来源图 ID：只排除明确来自别的图的旧折叠段。
+    const isLocalEdge = edge => edge.relation === 'influence'
+      && (this.activeId === null || (edge.steps ?? []).every(step => step.graphId === undefined || step.graphId === this.activeId));
+    for (const edge of projection.edges) {
+      if (!isLocalEdge(edge) || edge.source === edge.target) continue;
+      const sourceDirection = directions.get(edge.source), targetDirection = directions.get(edge.target);
+      if (sourceDirection) sourceDirection.outgoing = true;
+      if (targetDirection) targetDirection.incoming = true;
+    }
+    return new Map([...directions].map(([id, direction]) => [id,
+      direction.outgoing && !direction.incoming ? 'node-start' : direction.incoming && !direction.outgoing ? 'node-end' : '']));
+  }
   fit() {
     if (this.gesture) return;
     const points = this.graph.nodes.map(node => this.positions[node.id]);
@@ -2429,22 +2446,13 @@ export class GraphCanvas {
       label.textContent = sign === 'specializes' ? 'is-a' : sign === 'part-of' ? 'part-of' : edge.sign === 1 ? '＋' : edge.sign === -1 ? '−' : '？'; group.append(label); this.world.append(group);
       this.edgeElements.set(edge.id, { group, hit, line, label });
     }
-    // 节点角色只从当前文件的本地连线派生，不写入 canonical，也不让引用连线改变角色。
-    const directions = new Map(projection.nodes.map(node => [node.id, { incoming: false, outgoing: false }]));
-    const isLocalEdge = edge => this.activeId === null || (edge.steps.length === 1 && edge.steps[0].graphId === this.activeId);
-    for (const edge of projection.edges) {
-      if (!isLocalEdge(edge) || edge.source === edge.target) continue;
-      const sourceDirection = directions.get(edge.source), targetDirection = directions.get(edge.target);
-      if (sourceDirection) sourceDirection.outgoing = true;
-      if (targetDirection) targetDirection.incoming = true;
-    }
+    const roles = this.nodeRoles();
     const tagLookup = new Map((this.tagDefinitions ?? []).map(tag => [tag.id.normalize('NFKC').trim().replace(/\s+/gu, ' ').toLocaleLowerCase(), tag]));
     const visibleNodeIds = new Set(projection.nodes.map(item => item.id));
     for (const node of projection.nodes) {
       const point = positions[node.id];
       const selected = this.selectedIds().includes(node.id);
-      const direction = directions.get(node.id);
-      const role = direction?.outgoing && !direction.incoming ? 'node-start' : direction?.incoming && !direction.outgoing ? 'node-end' : '';
+      const role = roles.get(node.id) ?? '';
       const roleLabel = role === 'node-start' ? '，起点' : role === 'node-end' ? '，终点' : '';
       const nodeColor = this.nodeColors?.[node.id];
       const colorClass = nodeColor ? `node-color-${nodeColor.slice(1).toLowerCase()}` : '';
