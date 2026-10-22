@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { readFile, writeFile, mkdtemp, rm } from 'node:fs/promises';
+import { readFile, writeFile, mkdtemp, mkdir, readdir, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import vm from 'node:vm';
@@ -72,6 +72,53 @@ test('元信息读取绕过坏规则文件，核心名称损坏时目录仍可�
   await writeFile(manifestPath, '{坏 JSON');
   await assert.rejects(readProjectMetadata(root), { code: 'INVALID_JSON' });
   assert.equal((await readWorkspaceDirectory(root)).navigationOnly, true);
+});
+
+test('未初始化目录的名称读取提示初始化，且不会创建工作区', async t => {
+  const root = await mkdtemp(join(tmpdir(), 'mechanics-name-empty-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  await assert.rejects(readProjectMetadata(root), {
+    code: 'WORKSPACE_NOT_INITIALIZED', message: /尚未初始化.*自动初始化/,
+  });
+  assert.deepEqual(await readdir(root), []);
+  assert.equal((await readWorkspaceDirectory(root)).navigationOnly, true);
+});
+
+test('未初始化目录的名称 HTTP 错误保留业务提示且不激活项目', async t => {
+  const root = await mkdtemp(join(tmpdir(), 'mechanics-name-http-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const server = await startServer({ port: 0, projectHistoryPath: join(root, 'history.json') });
+  t.after(() => server.close());
+  const response = await fetch(server.origin + '/api/project/metadata', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ projectRoot: root }),
+  });
+  assert.equal(response.ok, false);
+  const body = await response.json();
+  assert.equal(body.error, 'WORKSPACE_NOT_INITIALIZED');
+  assert.match(body.message, /尚未初始化.*自动初始化/);
+  assert.equal((await (await fetch(server.origin + '/api/project')).json()).status, 'empty');
+  assert.deepEqual(await readdir(root), []);
+});
+
+test('已有工作区缺少清单或名称无效时明确报错，不误判为未初始化', async t => {
+  const root = await mkdtemp(join(tmpdir(), 'mechanics-name-incomplete-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  await mkdir(join(root, '.mechanics'));
+  await assert.rejects(readProjectMetadata(root), {
+    code: 'PROJECT_METADATA_MISSING', message: /workspace.json.*缺失.*恢复/,
+  });
+  for (const name of ['', '   ', null]) {
+    await writeFile(join(root, '.mechanics', 'workspace.json'), JSON.stringify({ kind: 'workspace', name }));
+    await assert.rejects(readProjectMetadata(root), { code: 'PROJECT_METADATA_INVALID' });
+  }
+});
+
+test('非目录工作区和不存在的项目不能误判为未初始化', async t => {
+  const root = await mkdtemp(join(tmpdir(), 'mechanics-name-unsafe-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  await writeFile(join(root, '.mechanics'), '不是目录');
+  await assert.rejects(readProjectMetadata(root), { code: 'UNSAFE_PATH' });
+  await assert.rejects(readProjectMetadata(join(root, 'missing')), { code: 'ENOENT' });
 });
 
 test('保存项目设置后独立名称接口每次回读磁盘，刷新不取文件夹名或历史缓存', async t => {

@@ -8,10 +8,10 @@
 
 ```powershell
 npm install -g @veewo/mechanics
-mech init <项目目录> --name <项目名称> --id <稳定项目ID>
+mech init <项目目录>
 ```
 
-`init` 创建项目内 `.mechanics` 工作区，并安装受管的 `mechanics-search`、`mechanics-modeling` 与 `mechanics-doc` skills 和 `.mechanics/tools/workspace-tool.mjs`。之后运行 `mech sync` 可等待同步完成；通过 Mechanics 网页打开或初始化项目时，则在后台更新这些资产，不阻断页面响应。后台失败会显示提示并记录服务日志，修复后重新打开可重试。更新来源是当前运行服务的安装包，不会联网升级。
+`init` 默认使用文件夹名作为显示名，自动生成符合协议的稳定 ID，也可用 `--name` 和 `--id` 显式指定。它创建项目内 `.mechanics` 工作区，并安装受管的 `mechanics-search`、`mechanics-modeling` 与 `mechanics-doc` skills 和 `.mechanics/tools/workspace-tool.mjs`。重复执行会补齐、修复这些受管资产，不覆盖已有项目名称、ID、概念、规则或图文件。网页选择文件夹时自动执行同样的准备，无需额外填写初始化表单。已有领域会话的后续资产更新仍可在后台进行；也可运行 `mech sync` 等待同步完成。失败明确提示，重新打开可重试。更新来源是当前运行服务的安装包，不会联网升级。
 
 ## 启动网页编辑器
 
@@ -27,7 +27,7 @@ mech web
 mech web --project <项目目录> --port 4319
 ```
 
-浏览器打开 CLI 输出的本地地址。省略 `--project` 时，网页以空项目状态启动；可在网页中打开或初始化项目。网页只允许打开已通过工作区校验的项目。
+浏览器打开 CLI 输出的本地地址。省略 `--project` 时，网页以空项目状态启动；选择空文件夹即可自动初始化并打开。已有项目自动修复受管工具后加载数据；核心数据损坏时仍保留目录浏览并明确报告错误，不用空定义覆盖用户文件。
 
 ## 配置 Codex MCP Apps
 

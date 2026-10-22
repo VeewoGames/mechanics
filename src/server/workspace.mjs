@@ -109,9 +109,19 @@ export async function readDocument(root, file) {
 export async function readProjectMetadata(projectRoot) {
   if (typeof projectRoot !== 'string' || !isAbsolute(projectRoot)) throw new ContractError('PROJECT_REQUIRED', '读取项目名称必须提供绝对项目路径');
   const project = await realpath(projectRoot), root = resolve(project, '.mechanics');
-  const info = await lstat(root);
+  let info;
+  try { info = await lstat(root); }
+  catch (error) {
+    if (error.code !== 'ENOENT') throw error;
+    throw new ContractError('WORKSPACE_NOT_INITIALIZED', '该目录尚未初始化 Mechanics 工作区；重新打开文件夹会自动初始化，也可运行 mech init <项目目录>。');
+  }
   if (info.isSymbolicLink() || !info.isDirectory()) throw new ContractError('UNSAFE_PATH', '项目工作区必须是普通目录：' + root);
-  const { document } = await readDocument(root, 'workspace.json');
+  let document;
+  try { ({ document } = await readDocument(root, 'workspace.json')); }
+  catch (error) {
+    if (error.code !== 'ENOENT') throw error;
+    throw new ContractError('PROJECT_METADATA_MISSING', '工作区的 workspace.json 缺失，请确认项目根目录或恢复该文件；不会自动覆盖已有工作区。');
+  }
   if (document?.kind !== 'workspace' || typeof document.name !== 'string' || !document.name.trim()) {
     throw new ContractError('PROJECT_METADATA_INVALID', 'workspace.json 缺少有效的项目显示名');
   }

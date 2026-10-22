@@ -1,6 +1,6 @@
 {
   "name": "@veewo/mechanics",
-  "version": "0.10.2",
+  "version": "0.11.0",
   "private": false,
   "description": "Mechanics：规则、概念与关系解释工具",
   "type": "module",
@@ -22,7 +22,7 @@
   ],
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/chanyuenpang/mechanics.git"
+    "url": "git+https://github.com/VeewoGames/mechanics.git"
   },
   "publishConfig": {
     "access": "public"

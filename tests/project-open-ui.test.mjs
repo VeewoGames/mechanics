@@ -62,10 +62,12 @@ test('结构提示让起点和终点各自闪烁，样式不同，且只是临�
   assert.match(app, /const helpTip = text =>/);
 });
 
-test('目录打开不走领域打开接口，不解析默认图或恢复最近图', () => {
+test('打开项目自动准备并加载领域数据，目录投影本身保持只读', () => {
   assert.match(openProject, /api\('\/api\/project\/directory', \{ projectRoot \}\)/);
   assert.match(openProject, /activateDirectory\(opened\)/);
-  const directory = app.slice(app.indexOf('function activateDirectory('), app.indexOf('async function openDirectoryFile('));
+  assert.ok(openProject.indexOf("api('/api/project/prepare'") < openProject.indexOf("api('/api/project/directory'"));
+  assert.match(openProject, /await loadPreparedDirectory\(opened\)/);
+  const directory = app.slice(app.indexOf('function activateDirectory('), app.indexOf('async function loadPreparedDirectory('));
   assert.doesNotMatch(directory, /prepareOpening|\/api\/project\/open|restoreRecentState/);
   assert.match(directory, /workspace = null/);
   assert.match(directory, /renderSidebar\(\); renderProjectTabs\(\); updateStatus\(\)/);

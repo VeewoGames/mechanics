@@ -31,10 +31,13 @@ export async function findWorkspace(start = process.cwd()) {
   return resolve(projectRoot, WORKSPACE_DIRECTORY);
 }
 
-export async function initProject(target, { name = '规则模型工作区', id = null, createProjectRoot = true, syncAssets = true } = {}) {
+export async function initProject(target, { name = null, id = null, createProjectRoot = true, syncAssets = true } = {}) {
   if (!target) throw new ContractError('PROJECT_REQUIRED', 'init 必须指定项目目录');
   const requestedRoot = resolve(target);
-  id ??= basename(requestedRoot);
+  name ??= basename(requestedRoot) || '规则模型工作区';
+  // 文件夹名只用于首次生成默认标识；显式 ID 仍按协议严格校验。
+  const slug = basename(requestedRoot).normalize('NFKC').toLowerCase().replace(/[^a-z0-9]+/gu, '-').replace(/^-+|-+$/gu, '').slice(0, 96).replace(/-+$/u, '');
+  id ??= semanticIdProblem(slug) ? 'workspace' : slug;
   const idProblem = semanticIdProblem(id);
   if (idProblem) throw new ContractError('INVALID_ID', `工作区 ID ${idProblem}：${id}。请用 --id 指定稳定的英文语义 ID。`);
   try {
@@ -83,6 +86,18 @@ export async function initProject(target, { name = '规则模型工作区', id =
   } catch (error) {
     throw new ContractError('INIT_PARTIAL', `${WORKSPACE_DIRECTORY} 已创建，但项目 skill 注册或 Agent 机制文档发布未完整完成：${error.message}`);
   }
+}
+
+// 面向网页与 CLI 的幂等入口：只创建缺失的工作区，只替换包拥有的工具资产。
+// 已有领域文件即使损坏也不重建；目录仍可浏览，领域读取继续报告真实错误。
+export async function ensureProject(target, options = {}) {
+  try { return { initialized: true, ...await initProject(target, options) }; }
+  catch (error) { if (error.code !== 'WORKSPACE_EXISTS') throw error; }
+  const projectRoot = await realpath(resolve(target)), workspaceRoot = resolve(projectRoot, WORKSPACE_DIRECTORY);
+  const info = await lstat(workspaceRoot);
+  if (info.isSymbolicLink() || !info.isDirectory()) throw new ContractError('UNSAFE_PATH', '项目工作区必须是普通目录：' + workspaceRoot);
+  const skills = options.syncAssets === false ? {} : await registerProjectSkills(projectRoot);
+  return { initialized: false, projectRoot, workspaceRoot, ...skills };
 }
 
 export const initWorkspace = initProject;

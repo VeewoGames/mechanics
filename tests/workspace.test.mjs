@@ -95,7 +95,9 @@ test('CLI 在仓库外初始化项目，子目录定位同一项目，显式目�
   const init = call(['init', target, '--name', '规则资料', '--id', 'another-game'], temp);
   assert.equal(init.status, 0, init.stderr);
   const filesBefore = await snapshot(target);
-  assert.equal(call(['init', target], temp).status, 1);
+  const repeated = call(['init', target], temp);
+  assert.equal(repeated.status, 0, repeated.stderr);
+  assert.equal(JSON.parse(repeated.stdout).initialized, false);
   assert.deepEqual(await snapshot(target), filesBefore);
   const child = join(target, '.mechanics', 'mechanics');
   assert.equal(call(['root'], child).stdout.trim(), await realpath(target));
@@ -109,7 +111,14 @@ test('CLI 在仓库外初始化项目，子目录定位同一项目，显式目�
   const semanticTarget = join(temp, 'semantic-workspace');
   assert.equal(call(['init', semanticTarget], temp).status, 0);
   assert.equal(JSON.parse(await readFile(join(semanticTarget, '.mechanics', 'workspace.json'), 'utf8')).id, 'semantic-workspace');
-  assert.equal(call(['init', join(temp, '中文 工作区')], temp).status, 1);
+  for (const folder of ['中文 工作区', 'Wizard']) {
+    const root = join(temp, folder), result = call(['init', root], temp);
+    assert.equal(result.status, 0, result.stderr);
+    const manifest = JSON.parse(await readFile(join(root, '.mechanics/workspace.json'), 'utf8'));
+    assert.equal(manifest.name, folder);
+    assert.match(manifest.id, /^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$/u);
+    if (folder === 'Wizard') assert.equal(manifest.id, 'wizard');
+  }
   assert.equal(call(['validate', '--project', child], temp).status, 1);
   for (const args of [['web', '--port', 'NaN'], ['web', '--port', '65536'], ['validate', '--port', '2'], ['migrate'], ['unknown'], ['web', 'extra'], ['serve']]) {
     assert.equal(call(args, child).status, 1, args.join(' '));

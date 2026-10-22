@@ -6,7 +6,7 @@ import { resolve } from 'node:path';
 import metadata from '../../package.json' with { type: 'json' };
 import { readWorkspace } from './workspace.mjs';
 import { migrateWorkspace } from './store.mjs';
-import { findProject, initProject } from './workspace-commands.mjs';
+import { findProject, ensureProject } from './workspace-commands.mjs';
 import { startServer } from './http.mjs';
 import { runAgent, runAgentDraft, runAgentEditSession, runAgentMechanicTarget, runAgentMutation, runRecipeMigration } from './agent.mjs';
 import { publishCatalog } from './catalog.mjs';
@@ -103,7 +103,7 @@ mech --help | --version
 
 web 省略 --project 时以空项目状态启动，由网页打开项目。
 validate / catalog / root 省略 --project 时，从当前目录向上寻找最近的 .mechanics。
-init 不覆盖已有 .mechanics 或不同内容的同名 skill，并注册包内 Mechanics skills 到项目 .agents/skills。
+init 默认使用目录名和自动生成的稳定 ID；重复执行保留已有领域数据，并补齐、修复受管 skills 和工具。
 当前工作区协议为 v${CURRENT_WORKSPACE_VERSION}；web 打开项目时自动逐级升级有迁移路径的旧版本，validate / catalog / agent 等命令要求可读取的当前协议；也可用 migrate 显式预览后执行。
 需要 Node.js 24+。不上传分析资料，也不自动公开发布。`;
 
@@ -151,7 +151,7 @@ try {
     const allowed = { init: ['name', 'id'], sync: ['project'], web: ['project', 'port'], validate: ['project'], migrate: ['project', 'from', 'to', 'revision', 'execute'], 'migrate-project': ['project', 'execute'], repair: ['project', 'revision', 'execute'], catalog: ['project'], root: ['project'] };
     if (!allowed[command] || positionals.length !== (command === 'init' || command === 'repair' ? 2 : 1)) throw new Error('命令或参数数量无效，请运行 --help。');
     for (const option of Object.keys(values)) if (!allowed[command].includes(option)) throw new Error(command + ' 不支持 --' + option);
-    if (command === 'init') console.log(JSON.stringify(await initProject(target, { name: values.name, id: values.id }), null, 2));
+    if (command === 'init') console.log(JSON.stringify(await ensureProject(target, { name: values.name, id: values.id }), null, 2));
     else {
       if (values.project === '') throw new Error('--project 不能为空');
       const projectRoot = values.project !== undefined ? await realpath(resolve(values.project))

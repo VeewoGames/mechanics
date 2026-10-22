@@ -354,7 +354,7 @@ async function api(path, body) {
       && (body.projectSessionToken ?? workspace?.projectSessionToken) === workspace?.projectSessionToken
         ? { resourceRevisions: body.resourceRevisions ?? workspace?.resourceRevisions } : {};
     const payload = body && workspace?.projectGeneration !== undefined
-      && !['/api/directories/pick', '/api/project/metadata', '/api/project/directory', '/api/project/open', '/api/projects/pin', '/api/projects/remove', '/api/preferences'].includes(path)
+      && !['/api/directories/pick', '/api/project/metadata', '/api/project/prepare', '/api/project/directory', '/api/project/open', '/api/projects/pin', '/api/projects/remove', '/api/preferences'].includes(path)
         ? { ...body, ...baseline, projectGeneration: body.projectGeneration ?? workspace.projectGeneration, projectSessionToken: body.projectSessionToken ?? workspace.projectSessionToken } : body;
     const requestPath = !payload && workspace?.projectSessionToken && ['/api/workspace', '/api/local-ui-state', '/api/project-references', '/api/agent', '/api/concept-docs'].includes(path)
       ? `${path}?projectSessionToken=${encodeURIComponent(workspace.projectSessionToken)}` : path;
@@ -371,7 +371,7 @@ async function api(path, body) {
     if (path === '/api/directories/pick') throw new Error('无法获取文件夹选择结果：' + error.message + '。项目未切换，请重新选择。');
     // 连接或解析失败不能推定服务重启，更不能刷新页面抹掉错误与草稿。
     if (path === '/api/project/metadata') throw Object.assign(new Error(timedOut ? '读取项目显示名超时，请重新读取。' : '无法读取项目显示名：' + error.message), { code: timedOut ? 'CONNECTION_TIMEOUT' : 'CONNECTION_FAILED' });
-    const openingProject = ['/api/project/open', '/api/project/directory'].includes(path);
+    const openingProject = ['/api/project/open', '/api/project/prepare', '/api/project/directory'].includes(path);
     const failure = new Error(openingProject ? (timedOut ? `打开项目在 ${requestTimeout / 1000} 秒内没有响应，请重试；目录和草稿未被覆盖。` : '打开项目时连接中断或响应无法解析，请重试；页面未自动刷新。')
       : body ? '连接中断或响应无法解析，写入结果待确认。草稿已保留，请重新读取磁盘核实后再操作。'
         : timedOut ? `本地服务在 ${API_REQUEST_TIMEOUT_MS / 1000} 秒内没有响应。请检查服务后重新打开项目。` : '无法读取本地服务：' + error.message);
@@ -1033,7 +1033,7 @@ function renderSidebar() {
     $('resource-tabs').hidden = $('resource-actions').hidden = true;
     const content = $('resource-content'); content.replaceChildren();
     const loadAll = button('加载项目数据', () => openDirectoryFile(), 'primary directory-load');
-    loadAll.title = '解析项目 JSON 并进入编辑；缺少工作区时会明确要求初始化';
+    loadAll.title = '重新加载项目数据并进入编辑';
     const loadRow = el('div', undefined, 'sidebar-hint-row'); loadRow.append(loadAll, helpTip('当前只是磁盘目录。点击图文件或「加载项目数据」后才读取数据。'));
     content.append(loadRow);
     // 目录投影沿用资源树的行样式；非图文件只作弱化的只读条目，不提供打开入口。
@@ -2050,12 +2050,21 @@ function activateDirectory(opened) {
   $('file-name').textContent = '请选择图文件'; $('file-kind').textContent = '目录';
   $('toolbar').hidden = true; $('implementation-badge').hidden = true;
   $('empty').hidden = false; $('empty-title').textContent = '项目目录已打开';
-  $('empty-hint').textContent = '点击左侧图文件，或直接加载项目数据；目录浏览不解析 JSON，也不更新项目技能。';
+  $('empty-hint').textContent = '点击左侧图文件，或直接加载项目数据；工具文件已自动准备，项目数据读取失败时仍可浏览目录。';
   $('empty-add').hidden = false; $('empty-add').textContent = '加载项目数据'; $('counts').textContent = '未加载图文件';
   editorTabs.splice(0, editorTabs.length); renderEditorTabs();
   renderSidebar(); renderProjectTabs(); updateStatus();
   void refreshDirectoryName(opened);
   if (opened.diagnostics.length) showError(new Error('目录已打开；以下路径无法读取：\n' + opened.diagnostics.map(item => `${item.path}：${item.message}`).join('\n')));
+}
+
+async function loadPreparedDirectory(directory) {
+  try {
+    const opened = await api('/api/project/open', { projectRoot: directory.projectRoot });
+    if (browserWorkspace === directory) await activateSourceProject(opened);
+  } catch (error) {
+    if (browserWorkspace === directory) showError(new Error('目录已打开，但项目数据加载失败：' + error.message));
+  }
 }
 
 async function openDirectoryFile(file = null) {
@@ -2145,8 +2154,10 @@ async function openProject() {
     submitting = true; $('dialog-error').hidden = true; root.inert = true;
     canvas.cancel(); opening = true; updateStatus();
     try {
+      await api('/api/project/prepare', { projectRoot });
       const opened = await api('/api/project/directory', { projectRoot });
       activateDirectory(opened); $('dialog').close('ok');
+      await loadPreparedDirectory(opened);
     } catch (error) {
       // 打开失败保留对话框与列表，服务端返回的实际读取错误就地显示。
       if (error.code === 'PROJECT_SWITCH_PARTIAL') {
@@ -2361,8 +2372,9 @@ async function openProjectRoot(projectRoot) {
   if (opening || !await guard()) return false;
   canvas.cancel(); opening = true; updateStatus();
   try {
+    await api('/api/project/prepare', { projectRoot });
     const opened = await api('/api/project/directory', { projectRoot });
-    activateDirectory(opened); return true;
+    activateDirectory(opened); await loadPreparedDirectory(opened); return true;
   } finally { opening = false; updateStatus(); }
 }
 
@@ -2588,7 +2600,9 @@ opening = true; updateStatus();
 try {
   const project = await api('/api/project');
   if (project.status === 'active') {
-    activateDirectory(await api('/api/project/directory', { projectRoot: project.projectRoot }));
+    await api('/api/project/prepare', { projectRoot: project.projectRoot });
+    const opened = await api('/api/project/directory', { projectRoot: project.projectRoot });
+    activateDirectory(opened); await loadPreparedDirectory(opened);
   }
   else { opening = false; updateStatus(); await openProject(); }
 } catch (error) { showError(error); }

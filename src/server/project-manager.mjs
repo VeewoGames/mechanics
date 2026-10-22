@@ -2,7 +2,7 @@ import { lstat } from 'node:fs/promises';
 import { randomUUID } from 'node:crypto';
 import { isAbsolute, resolve } from 'node:path';
 import { createWorkspaceStore, migrateWorkspace } from './store.mjs';
-import { initProject } from './workspace-commands.mjs';
+import { initProject, ensureProject } from './workspace-commands.mjs';
 import { registerProjectSkills } from './project-skills.mjs';
 import { projectContext, WORKSPACE_DIRECTORY } from './project-context.mjs';
 import { readDocument } from './workspace.mjs';
@@ -154,6 +154,10 @@ export function createProjectManager({ onActivated = null, syncProjectAssets = r
         projectGeneration: session.generation, projectSessionToken: session.token, workspaceId: session.workspaceId,
         openSessions: [...sessions.values()].map(item => ({ projectRoot: item.context.projectRoot, workspaceId: item.workspaceId, projectSessionToken: item.token })) }
         : { status: 'empty', projectGeneration: generation };
+    }),
+    prepare: body => enqueue(async () => {
+      if (typeof body?.projectRoot !== 'string' || !isAbsolute(body.projectRoot)) fail('PROJECT_REQUIRED', '准备项目必须提供绝对 projectRoot');
+      return ensureProject(body.projectRoot, { createProjectRoot: false });
     }),
     open: body => enqueue(() => openStore(body)),
     readAssetSync: token => { const session = current(token); return attach({}, session); },
