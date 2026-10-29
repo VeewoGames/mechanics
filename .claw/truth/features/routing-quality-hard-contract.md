@@ -3,6 +3,7 @@
 <!-- state: current -->
 ## 当前行为
 
+- 本合同适用于底层正交路由调用；网页已无已存视图打开模式。它不适用于总览和机制单图的即时力导向连线；后者的边界见[可取消后台计算与打开事务](async-compute-and-opening-transaction.md)。不能把正交避障与质量门禁当作力导向连线的保证。
 - 质量向量由 `src/web/canvas.mjs` 的 `ROUTING_QUALITY`（`Object.freeze`）独占定义，索引顺序即裁决优先级：`hardInvalid` 0、`collinearOverlap` 1、`endpointExcursions` 2、`crossings` 3、`detour` 4、`totalBends` 5、`maxBends` 6、`bendCrowding` 7、`nearParallel` 8、`length` 9。前五项是几何后处理的保护集，任何改进都不得使它们变差；其中只有第 0 项与第 1 项同时是提交门禁，`endpointExcursions`、`crossings` 与 `detour` 只受回归保护，非零本身不拒绝路线。
 - `routeGraphEdges(graph, positions, cola, fixedRoutes, { allowProvisional })` 是固定节点正交布线的入口，`routeGraphScore(graph, positions, routes)` 返回同一定义的完整质量向量（内部由 `routeScore` 统计节点穿越、端点包围、交叉、绕行、拐点与近距平行）。两个函数与 `ROUTING_QUALITY` 共同构成对外合同，验证与后处理都以它们的索引取值。
 - 硬违规按构造拒绝而不是事后告警：返回前若质量向量第 0 项大于 0（存在节点穿越或缺失路径），或第 1 项大于 0.01（存在共线重叠，且 `allowProvisional` 为 false），直接抛出明确错误，不交付坏几何。端口分配违反容量、槽位或相邻面负载合同时抛错；首末接入段短于 `ENDPOINT_SEGMENT_MIN`（30px）的连线同样抛错。

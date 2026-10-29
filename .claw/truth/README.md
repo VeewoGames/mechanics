@@ -10,6 +10,7 @@
 - [CLI 与文件保存](features/cli-workspace-storage.md)：安装与资料分离、目录发现、产品/协议版本、保存门禁及验证范围。
 - [DSH 适配器与对话图卡](features/dsh-adapter-and-chat-widget.md)：项目工具版本、会话工作区定位、图卡挂载与分层验收。
 - [编辑器与图层](features/editor-navigation-and-layers.md)：概念表、机制图、草稿保存归属、最近视图与关联项目展示。
+- [固定总览与单画布力导向决策](adr/2026-10-29-session-overview-and-force-layout.md)：非文件浏览入口、全倍率 Canvas、连通分量牵引、渐进模拟与网页视图模式退出。
 - [目录浏览与领域加载分离决策](adr/2026-10-12-directory-browsing-domain-loading-boundary.md)：只读目录投影、逐资源读取隔离与连接失败保留现场。
 - [关联项目缺失处理决策](adr/2026-10-11-linked-project-fail-open.md)：共享声明与本机绑定分离、缺失目标隔离及发现入口边界。
 - [可取消后台计算与打开事务](features/async-compute-and-opening-transaction.md)：Worker 路由/排版、结果门禁与真实打开进度。
@@ -17,7 +18,7 @@
 - [读取图端点完整性](features/read-graph-integrity.md)：投影边界、节点与端点不变量，以及失败布局事务。
 - [正交路由质量硬合同](features/routing-quality-hard-contract.md)：质量向量与裁决顺序、按构造拒绝硬违规、规模回归断言。
 - [独立工作流决策](adr/2026-08-31-independent-project-ownership.md)：源码、游戏资料与开发知识的归属。
-- [独立视图文件决策](adr/2026-08-31-view-file-autosave.md)：自动写回、最近引用、失败草稿保护与显式 v3 迁移。
+- [独立视图文件决策](adr/2026-08-31-view-file-autosave.md)：历史自动写回、最近引用和显式 v3 迁移；网页交互已被固定总览取代。
 - [可取消 Worker 计算决策](adr/2026-09-01-cancellable-worker-compute.md)：计算生命周期、竞态门禁与打开事务。
 - [语义 ID 与 Agent catalog 决策](adr/2026-09-02-semantic-ids-and-agent-catalog.md)：稳定身份、aliases、端点规则唯一与生成读模型。
 - [is-a 单父与展示状态决策](adr/2026-09-22-is-a-single-parent-and-presentation-state.md)：单父分类不变量、显式展开状态与唯一的显示投影。

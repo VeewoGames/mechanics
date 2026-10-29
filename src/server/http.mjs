@@ -15,6 +15,9 @@ const dependency = createRequire(import.meta.url);
 const assets = new Map([
   ['/', [new URL('../web/index.html', import.meta.url), 'text/html; charset=utf-8']],
   ['/app.mjs', [new URL('../web/app.mjs', import.meta.url), 'text/javascript; charset=utf-8']],
+  ['/overview.mjs', [new URL('../web/overview.mjs', import.meta.url), 'text/javascript; charset=utf-8']],
+  ['/force-simulation.mjs', [new URL('../web/force-simulation.mjs', import.meta.url), 'text/javascript; charset=utf-8']],
+  ['/force-geometry.mjs', [new URL('../web/force-geometry.mjs', import.meta.url), 'text/javascript; charset=utf-8']],
   ['/icons.mjs', [new URL('../web/icons.mjs', import.meta.url), 'text/javascript; charset=utf-8']],
   ['/canvas.mjs', [new URL('../web/canvas.mjs', import.meta.url), 'text/javascript; charset=utf-8']],
   ['/route-cache.mjs', [new URL('../web/route-cache.mjs', import.meta.url), 'text/javascript; charset=utf-8']],
@@ -31,7 +34,7 @@ const assets = new Map([
   ['/glossary.mjs', [new URL('../web/glossary.mjs', import.meta.url), 'text/javascript; charset=utf-8']],
   ['/concept-docs.mjs', [new URL('../web/concept-docs.mjs', import.meta.url), 'text/javascript; charset=utf-8']],
   ['/resource-navigation.mjs', [new URL('../web/resource-navigation.mjs', import.meta.url), 'text/javascript; charset=utf-8']],
-  ['/view-files.mjs', [new URL('../web/view-files.mjs', import.meta.url), 'text/javascript; charset=utf-8']],
+  ['/mechanic-files.mjs', [new URL('../web/mechanic-files.mjs', import.meta.url), 'text/javascript; charset=utf-8']],
   ['/style.css', [new URL('../web/style.css', import.meta.url), 'text/css; charset=utf-8']],
   ['/icons/eye.svg', [new URL('../web/icons/eye.svg', import.meta.url), 'image/svg+xml']],
   ['/icons/eye-off.svg', [new URL('../web/icons/eye-off.svg', import.meta.url), 'image/svg+xml']],

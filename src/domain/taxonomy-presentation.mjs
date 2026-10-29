@@ -68,9 +68,7 @@ export function projectTaxonomyPresentation(graph, { expandedNodeIds = [], retai
   return assertReadGraphIntegrity({ nodes, edges }, '分类展示投影输出');
 }
 
-// 画布、布局与路由的唯一显示投影入口：三者必须消费同一份 displayGraph，
-// 否则“隐藏 is-a”只影响渲染，孤立父概念仍会参与排版并占住路线。
-export function projectDisplayGraph(graph, { taxonomyPresentation = null, structuralPresentation = 'line', retainedNodeIds = [] } = {}) {
+function projectStructuralDisplay(graph, { taxonomyPresentation = null, structuralPresentation = 'line', retainedNodeIds = [] } = {}) {
   assertReadGraphIntegrity(graph, '显示投影输入');
   if (!taxonomyPresentation) return structuralProjection(graph, structuralPresentation);
   const projection = projectTaxonomyPresentation(graph, {
@@ -83,4 +81,9 @@ export function projectDisplayGraph(graph, { taxonomyPresentation = null, struct
       badges: [...node.badges, ...(structuralBadges.get(node.id) ?? [])] })),
     edges: projection.edges,
   }, '显示投影输出');
+}
+
+// 画布、布局与路由消费完整结构展示投影；选中高亮层数由 web 呈现，不裁剪领域图。
+export function projectDisplayGraph(graph, options = {}) {
+  return projectStructuralDisplay(graph, options);
 }

@@ -26,24 +26,24 @@ test('打开项目是单面板：最近项目与选定文件夹都直接打开�
   assert.match(openProject, /activateDirectory\(opened\); \$\('dialog'\)\.close\('ok'\);[\s\S]*?catch \(error\) \{[\s\S]*?reportProjectError\(error\);/);
 });
 
-test('侧栏可拖动调宽并只记在本机，视图可从侧栏与顶栏删除，「＋」随当前页新建', () => {
+test('侧栏可拖动调宽并只记在本机，新增和删除入口只面向机制', () => {
   assert.match(html, /<\/aside>\s*<div id="sidebar-resizer" class="sidebar-resizer" role="separator" aria-orientation="vertical"/);
   assert.match(style, /#sidebar\{width:var\(--sidebar-width,280px\)\}/);
   assert.match(app, /document\.documentElement\.style\.setProperty\('--sidebar-width', next \+ 'px'\)/);
   assert.match(app, /if \(persist\) saveUiPreference\(SIDEBAR_WIDTH_KEY, next\)/);
   assert.match(app, /resizer\.ondblclick = \(\) => \{ sidebarWidth = applySidebarWidth\(SIDEBAR_WIDTH_DEFAULT, \{ persist: true \}\); \}/);
-  const deleteView = app.slice(app.indexOf('async function deleteViewDialog('), app.indexOf('async function moveMechanicToFolder('));
-  assert.match(deleteView, /if \(current && !await guard\(\)\) return;/);
-  assert.match(deleteView, /write\(revision => api\('\/api\/view-delete', \{ revision, viewId: id \}\)\)/);
-  // 删除当前视图后先丢弃它的自动保存目标，再打开仍存在的文件。
-  assert.match(deleteView, /autosave\.reset\(\); viewId = null;[\s\S]*?await load\(/);
-  assert.match(app, /iconAction\('trash', \(\) => deleteViewDialog\(item\.id\), 'icon-button resource-remove'\)/);
-  assert.match(app, /\$\('delete-mechanic'\)\.onclick = \(\) => \(viewMode\(\) \? deleteViewDialog\(\) : deleteMechanicDialog\(\)\)\.catch\(showError\)/);
-  assert.match(app, /\$\('resource-create'\)\.onclick = \(\) => \(sidebarState\.page === 'views' \? newView\(\) : newGraph\(\)\)\.catch\(showError\)/);
-  assert.match(app, /\$\('new-view'\)\.hidden = !legacy;/);
+  assert.match(app, /\$\('delete-mechanic'\)\.onclick = \(\) => deleteMechanicDialog\(\)\.catch\(showError\)/);
+  assert.match(app, /\$\('resource-create'\)\.onclick = \(\) => newGraph\(\)\.catch\(showError\)/);
   // 页面 CSP 禁止内联 style 属性：节点标签色必须经 CSSOM 写入。
   assert.match(canvasSource, /background\.style\.setProperty\('--tag-color', chip\.color\)/);
   assert.doesNotMatch(canvasSource, /setAttribute\('style'|style: `/);
+});
+
+test('网页只提供总览、机制、概念表和文档，不保留旧视图或迁移入口', () => {
+  for (const id of ['overview-view', 'graph-view', 'table-view', 'docs-view', 'overview-tab', 'mechanics-tab', 'recent-tab']) assert.match(html, new RegExp(`id="${id}"`));
+  assert.doesNotMatch(html, /id="(?:views-tab|new-view|legacy-notice|discard-legacy)"/);
+  assert.doesNotMatch(app, /function (?:newView|deleteViewDialog|renderViewDetail|discardLegacy|persistView)\(/);
+  assert.doesNotMatch(app, /const viewMode =|ViewAutosave|\/api\/view-delete|\/api\/views/);
 });
 
 test('结构提示让起点和终点各自闪烁，样式不同，且只是临时画布提示', () => {
@@ -95,8 +95,8 @@ test('项目连接失败不刷新页面、不清空错误现场', async () => {
   assert.equal(reloaded, false);
 });
 
-test('概念详情的 is-a 开关是复选框，与颜色分区分离且只改各自文件的展开集合', () => {
-  assert.match(app, /if \(parentRule && \(draft \|\| viewMode\(\)\)\) \{/);
+test('机制详情的 is-a 开关是复选框，总览与机制分别读取自己的展开状态', () => {
+  assert.match(app, /if \(parentRule && draft\) \{/);
   // 复选框而不是按钮，并带上位概念提示。
   assert.match(app, /input\.type = 'checkbox'; input\.checked = expanded\.includes\(node\.id\);/);
   // 面板提供可搜索的 is-a 父概念选择器；清除不再有独立按钮，改由清空输入后就地确认。
@@ -117,7 +117,7 @@ test('概念详情的 is-a 开关是复选框，与颜色分区分离且只改�
   // 选择器已经显示父概念，开关下方不再重复「当前 is-a 父概念」文字。
   assert.doesNotMatch(app, /当前 is-a 父概念：/);
   assert.match(app, /choice\.append\(input, el\('span', '显示连线'\)\)/);
-  assert.match(app, /viewMode\(\) \? editView\(toggle, \{ keepSelection: true \}\) : edit\(toggle, \{ topology: false \}\)/);
+  assert.match(app, /edit\(toggle, \{ topology: false \}\)/);
   assert.doesNotMatch(app, /panel\.append\(button\(expanded\.includes\(node\.id\)/);
   // 与「节点风格／节点颜色」一样是 detail 分区：块间自带分隔线，不贴着颜色网格。
   assert.match(app, /el\('div', undefined, 'detail node-taxonomy'\)/);
@@ -133,8 +133,18 @@ test('概念详情的 is-a 开关是复选框，与颜色分区分离且只改�
   assert.match(style, /\.detail\.node-taxonomy \.choice>span\{flex:1;min-width:0;line-height:1\.65;color:#526051\}/);
   // 忙碌或自动保存暂停时，面板内的复选框与侧栏保持一致地禁用。
   assert.match(app, /\[\$\('resource-panel'\), \$\('inspector'\)\]\.flatMap\(root => \[\.\.\.root\.querySelectorAll\('input\[type=checkbox\]'\)\]\)/);
-  assert.match(app, /const currentTaxonomyPresentation = \(\) => \(viewMode\(\) \? viewTaxonomyPresentation : draft\?\.taxonomyPresentation\)/);
-  assert.match(app, /taxonomyPresentation: clone\(viewTaxonomyPresentation\)/);
+  // 两种画布分别读取各自的展开状态，总览的运行态不能覆盖机制文件。
+  const taxonomySource = app.slice(app.indexOf('const currentTaxonomyPresentation ='), app.indexOf('const displayOptions ='));
+  const overviewPresentation = { expandedNodeIds: ['overview-child'] };
+  const mechanicPresentation = { expandedNodeIds: ['mechanic-child'] };
+  let mode = 'mechanic';
+  const currentPresentation = runInNewContext(taxonomySource + '\ncurrentTaxonomyPresentation', {
+    overviewMode: () => mode === 'overview', overviewState: () => ({ taxonomyPresentation: overviewPresentation }),
+    draft: { taxonomyPresentation: mechanicPresentation },
+  });
+  assert.equal(currentPresentation(), mechanicPresentation);
+  mode = 'overview';
+  assert.equal(currentPresentation(), overviewPresentation);
   assert.match(app, /if \(!selectionInDisplay\(displayGraph, selection\)\) selection = null;/);
   // 展开后画布画的是同一条 is-a 边的虚线，而不是另画一遍分类线。
   assert.match(canvasSource, /edge\.relation !== 'influence'[\s\S]*?'stroke-dasharray'[\s\S]*?part-of/);
@@ -190,7 +200,9 @@ test('原生窗口等待超过 15 秒仍能交付结果，普通读取仍会超�
 });
 
 test('无参数启动无论项目状态或首个读取失败均会退出打开遮罩', () => {
-  const startup = app.slice(app.indexOf('// 首次加载也属于打开文件'), app.length);
+  const start = app.lastIndexOf('opening = true; updateStatus();');
+  assert.ok(start >= 0);
+  const startup = app.slice(start);
   assert.match(startup, /if \(project\.status === 'active'\)[\s\S]*?else \{ opening = false; updateStatus\(\); await openProject\(\); \}/);
   assert.match(startup, /catch \(error\) \{ showError\(error\); \}\s*finally \{ opening = false; updateStatus\(\); \}/);
   assert.match(app, /\$\('opening-overlay'\)\.hidden = !opening/);
@@ -252,7 +264,7 @@ test('操作控件使用统一 SVG 图标，关系记号仍作为领域信息保
   assert.match(html, /id="toggle-sidebar"[\s\S]*?<svg class="ui-icon"/);
   assert.match(html, /id="zoom-in"[\s\S]*?<svg class="ui-icon"/);
   assert.match(html, /id="dismiss-error"[\s\S]*?<svg class="ui-icon"/);
-  assert.match(app, /resourceIcon\.append\(icon\(kind === 'view' \? 'view' : 'mechanic'\)\)/);
+  assert.match(app, /resourceIcon\.append\(icon\('mechanic'\)\)/);
   assert.match(app, /projectIcon\.append\(icon\(item\.pinned \? 'pin' : 'project'\)\)/);
   assert.match(html, /id="positive-tool"[^>]*>＋→<\/button>/);
   // 结构关系（is-a 与 part-of）都不用连线工具；工具条只保留三种影响关系。

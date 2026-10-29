@@ -38,7 +38,7 @@
       <nav id="project-tabs" class="project-tabs" aria-label="关联项目列表"></nav>
     </section>
     <nav id="resource-tabs" class="resource-tabs" role="tablist" aria-label="资源类型">
-      <button id="views-tab" role="tab" aria-selected="true" aria-controls="resource-panel">视图 <span id="view-file-count"></span></button>
+      <button id="overview-tab" role="tab" aria-selected="true" aria-controls="resource-panel">总览</button>
       <button id="mechanics-tab" role="tab" aria-selected="false" aria-controls="resource-panel">机制库 <span id="mechanic-file-count"></span></button>
       <button id="recent-tab" role="tab" aria-selected="false" aria-controls="resource-panel">已打开 <span id="recent-file-count"></span></button>
     </nav>
@@ -58,10 +58,9 @@
   <main id="main">
     <header class="topbar">
       <button id="toggle-sidebar" class="icon-button" title="切换文件侧栏" aria-label="切换文件侧栏"><svg class="ui-icon" aria-hidden="true"><use href="#icon-menu"/></svg></button>
-        <div id="main-views" class="view-switch" role="group" aria-label="工作视图"><button id="table-view">概念表</button><button id="graph-view">机制图</button><button id="docs-view">文档</button></div>
-      <div class="header-actions"><span id="save-state">本地文件</span><button id="delete-mechanic" class="quiet danger" hidden>删除机制图</button><button id="save" class="primary" disabled>保存 <kbd>Ctrl S</kbd></button><button id="new-view" hidden>新建视图</button></div>
+        <div id="main-views" class="view-switch" role="group" aria-label="工作视图"><button id="overview-view">总览</button><button id="table-view">概念表</button><button id="graph-view">机制图</button><button id="docs-view">文档</button></div>
+      <div class="header-actions"><span id="save-state">本地文件</span><button id="delete-mechanic" class="quiet danger" hidden>删除机制图</button><button id="save" class="primary" disabled>保存 <kbd>Ctrl S</kbd></button></div>
     </header>
-    <div id="legacy-notice" role="status" hidden>已保留旧叠加记录。请点击顶部“新建视图”完成迁移，或<button id="discard-legacy" class="quiet">放弃旧叠加</button>后打开机制。</div>
     <div id="error" role="alert" hidden><span id="error-text"></span><button id="reload-error" hidden>重新读取</button><button id="dismiss-error" class="icon-button" aria-label="关闭错误提示"><svg class="ui-icon" aria-hidden="true"><use href="#icon-close"/></svg></button></div>
     <section id="glossary" aria-label="节点定义表格" hidden></section>
     <section id="concept-docs" aria-label="导出的概念文档" hidden></section>
@@ -74,6 +73,21 @@
         <span class="loading-spinner small" aria-hidden="true"></span><span id="compute-message">正在后台重绘连线…</span>
       </div>
       <div id="canvas-tooltip" role="tooltip" hidden></div>
+      <div id="graph-find-bar" class="floating" role="search" hidden>
+        <input id="graph-find" type="search" placeholder="查找当前图中的概念" aria-label="查找当前图中的概念" autocomplete="off">
+        <output id="graph-find-count" for="graph-find"></output>
+        <button id="graph-find-next" class="icon-button" aria-label="下一项" title="下一项 Enter">↓</button>
+        <button id="graph-find-clear" class="icon-button" aria-label="清除查找" title="清除 Esc">×</button>
+        <div id="graph-focus-controls" role="group" aria-label="选中节点高亮范围">
+          <span>高亮</span>
+          <div class="graph-depth-controls" role="group" aria-label="高亮层数">
+            <button id="graph-depth-1" type="button" aria-pressed="false" disabled>1 层</button>
+            <button id="graph-depth-2" type="button" aria-pressed="false" disabled>2 层</button>
+            <button id="graph-depth-3" type="button" aria-pressed="false" disabled>3 层</button>
+            <button id="graph-depth-all" type="button" aria-pressed="false" title="高亮与选中节点连通的全部概念和关系，保留完整画布" disabled>全部</button>
+          </div>
+        </div>
+      </div>
       <div id="empty" hidden><span class="empty-symbol"><svg class="ui-icon" aria-hidden="true"><use href="#icon-mechanic"/></svg></span><h2 id="empty-title">开始一张机制图</h2><p id="empty-hint">添加概念节点，将抽象规则连接起来。</p><button id="empty-add">概念节点</button></div>
       <div class="canvas-heading">
         <div id="breadcrumb" class="breadcrumb"><span id="file-kind">工作区</span><span class="slash">/</span><strong id="file-name">加载中</strong><span id="implementation-badge" hidden></span><span id="dirty-dot" hidden>●</span></div>
@@ -85,7 +99,7 @@
         <button id="auto-layout" class="tool icon-tool" title="没有选择时重排全部；选择节点后只重排选中节点" aria-label="自动排版全部节点"><svg class="tool-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><rect x="2.5" y="3.5" width="7" height="5" rx="1"></rect><rect x="14.5" y="3.5" width="7" height="5" rx="1"></rect><rect x="8.5" y="15.5" width="7" height="5" rx="1"></rect><path d="M6 8.5v3h12v-3M12 11.5v4"></path></svg><span class="visually-hidden">自动排版全部节点</span></button><button id="toggle-information-bar" class="tool icon-tool" title="关闭悬浮说明" aria-label="关闭悬浮说明" aria-pressed="true"><svg class="tool-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M6 3.5h9l3 3V20.5H6z"></path><path d="M15 3.5v3h3M9 11h6M9 15h6"></path></svg><span class="visually-hidden">关闭悬浮说明</span></button>
         <span class="divider"></span><button id="undo" class="tool icon-tool" title="撤销 Ctrl Z" aria-label="撤销" disabled><svg class="tool-icon" aria-hidden="true"><use href="#icon-undo"/></svg></button><button id="redo" class="tool icon-tool" title="重做 Ctrl Shift Z" aria-label="重做" disabled><svg class="tool-icon" aria-hidden="true"><use href="#icon-redo"/></svg></button>
       </div>
-      <div id="tool-hint" aria-live="polite">左键框选 · 右键平移 · Shift 增选 · 拖动选中节点</div>
+      <div id="tool-hint" aria-live="polite">左键平移 · Shift 框选 · 拖动节点调整布局</div>
       <div class="bottom-left"><button id="diagnostics" class="floating small-button"><svg class="ui-icon" aria-hidden="true"><use href="#icon-diagnostics"/></svg>结构提示</button><span id="counts"></span></div>
       <div class="zoom floating"><button id="zoom-out" class="icon-button" aria-label="缩小"><svg class="ui-icon" aria-hidden="true"><use href="#icon-zoom-out"/></svg></button><span id="zoom">100%</span><button id="zoom-in" class="icon-button" aria-label="放大"><svg class="ui-icon" aria-hidden="true"><use href="#icon-zoom-in"/></svg></button><span class="divider"></span><button id="fit" class="icon-button" title="适应画布 F" aria-label="适应画布"><svg class="ui-icon" aria-hidden="true"><use href="#icon-fit"/></svg></button></div>
     </section>

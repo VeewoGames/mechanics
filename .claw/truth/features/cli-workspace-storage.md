@@ -1,4 +1,4 @@
-# CLI、工作区与文件保存
+﻿# CLI、工作区与文件保存
 
 <!-- state: current -->
 ## 当前行为
@@ -10,7 +10,7 @@
 - 显式 `--project` 优先；`validate/catalog/root` 省略时向上寻找最近 `.mechanics/workspace.json`。`web` 可空项目启动。网页 `POST /api/project/prepare` 对普通目录幂等初始化缺失工作区：显示名取目录名，稳定 ID 将目录名 NFKC 归一化为小写英文 kebab-case，不合规时回退 `workspace`；已有工作区仅修复包拥有的受管技能与工具、不覆盖领域文件。CLI `mech init <目录>` 共用初始化逻辑，显式 ID 仍严格校验，重复初始化已有 `.mechanics` 只补齐或修复受管技能与工具，不覆盖领域数据。实现 owner 为 `src/server/workspace-commands.mjs` 与 `src/server/project-manager.mjs`；`tests/project-initialization.test.mjs` 覆盖初始化、网页准备与重复准备。目录浏览独立于领域会话；领域候选加载成功后才切换，`projectGeneration` 阻止旧页面写入新项目。
 - 正式协议只接受工作区 v15、definitions v7、rules v2、mechanic v9、view v5；mechanism 与 view 必填 `taxonomyPresentation`。`readWorkspace` 只把当前版本当作可写合同，读取路径不为缺失字段补默认值。显式领域加载时，所有仍有迁移路径的旧协议（v7–v14）在创建 store 前按预览→执行自动逐级升级（每一跳原子提交并回读，任何一跳失败零部分写入），失败返回迁移错误且不返回部分工作区；v11/v12 因缺少必填展示状态没有只读兼容模型，v7–v10 的直接读取仍按核心拓扑兼容模式呈现（结构编辑以 `COMPATIBILITY_READ_ONLY` 拒绝）。目录递归发现普通 `*.mechanic.json`、`*.view.json`；不保存第二份清单。隐藏条目与 node_modules 排除，普通目录包括空目录参与发现。服务内存 `files` 按 `(kind,id)` 对应当前路径；两种文件可同 ID，移动后重读可定位。
 - 唯一定义入口由 `workspace.json.definitions` 指定。目录浏览 `POST /api/project/directory` 只枚举路径，返回 `navigationOnly`、files、directories 与逐路径 diagnostics，不解析 JSON、不初始化、不迁移、不建立领域会话或写入能力；链接不跟随，深度/数量边界仍执行。核心损坏不阻断这一目录投影。显式领域加载仍严格校验核心；`readWorkspace` 默认严格失败，`isolateResources:true` 则把机制/视图的字节读取、JSON 解析及资源校验失败纳入 `resourceDiagnostics`，返回 `workspaceState: degraded`，不伪造缺失资源或放宽保存门禁。路径穿越、内部链接、嵌套工作区等安全边界不因资源隔离而取消。
-- 命名视图 `.view.json` 保存机制 ID、折叠与组合位置，源规则只读；新建和展示编辑写 activeLayerId:null，非空旧值只用于还原历史位置。`lastView` 只存 `{viewId}`；单机制最近打开使用单成员内联形式，旧多图内联状态只读保留直到明确保存或放弃。重开读最新来源，不保存合并副本；历史 compositions 仍校验，不删除或自动转换。
+- 底层 `.view.json` 保存机制引用、折叠与组合位置，不复制源规则；历史 `lastView` 和 compositions 继续接受原校验。网页已退出视图打开、创建、自动保存和旧叠加转换，不依据最近视图恢复画面，不删除旧数据；当前网页行为归[编辑器导航](editor-navigation-and-layers.md)。Schema、CLI 与文件接口合同不因网页入口退出而放宽。
 - 项目内单文件工具的维护源是 `src/tools/workspace-tool-source.mjs`，构建产物为 `workspace-tools/workspace-tool.mjs`，项目副本按受管资产同步。`WORKSPACE_TOOL_CONTRACT_VERSION` 是工具 JSON 合同版本的唯一 owner（当前 8），`guide`、`draft open`、`draft validate` 与 `draft save` 输出共用它；该版本不同于工作区 Schema 和查询语义版本。发现版本不一致应修复源、重建并同步受管副本，不降低 skill 门禁、伪造返回版本或绕过保存校验。
 - 服务仅绑定回环地址；静态资源精确白名单。新增供浏览器加载的领域模块时，须同步 `src/server/http.mjs` 的路由白名单和 `scripts/check-package.mjs` 的分发清单、隔离安装静态请求门禁；源码中存在模块不代表发行包浏览器可访问。API 没有 session、Bearer 或 Origin 授权并支持跨源 JSON，仍校验 Host、JSON、路径、projectGeneration、整体/资源 revision 和锁。任何知道项目绝对路径且能访问本机端口的网页或进程都可能写入，只用于可信本机开发环境。不能通过直接打开 file:// 页面运行编辑器。
 - 网页资源与 Schema 一样在 `startServer` 时一次性读入并固定（`src/server/http.mjs` 的 `servedAssets`）：进程启动后更新源码不会改变已经提供的内容，前端改动必须重启服务才能生效。`mech web` 遇到端口被占用时先请求 `POST /api/server/handoff`，让旧的 Mechanics 进程完成响应后自行关闭再重试绑定，旧版 Windows 进程由 `src/server/cli.mjs` 的 `terminateLegacyWindowsMechanics` 显式终止；1 秒内未释放端口以 `MECHANICS_HANDOFF_TIMEOUT` 失败，被非 Mechanics 进程占用的端口仍原样报 `EADDRINUSE`。因此新起的同端口实例会停掉先前的 Mechanics 服务，这是设计行为而非崩溃。

@@ -11,7 +11,7 @@ import { projectDisplayGraph } from '../src/domain/taxonomy-presentation.mjs';
 const graph = { nodes: [{ id: 'a' }, { id: 'b' }], edges: [{ id: 'a-b', source: 'a', target: 'b' }] };
 const positions = { a: { x: 0, y: 0 }, b: { x: 320, y: 0 } };
 
-test('网页 Worker 自动整理复用共享布局并返回可持久化的完整 route cache', async () => {
+test('共享正交布局 Worker 返回可持久化的完整 route cache', async () => {
   const direct = await autoLayoutGraph({ graph, positions, selectedIds: [], cachedRoutes: [], ELK });
   const worker = await computeGraphTask({ kind: 'layout', payload: { graph, positions, selectedIds: [], cachedRoutes: [] } }, { ELK });
   assert.deepEqual(worker.positions, direct.positions);
@@ -21,7 +21,8 @@ test('网页 Worker 自动整理复用共享布局并返回可持久化的完整
 });
 
 const app = await readFile(new URL('../src/web/app.mjs', import.meta.url), 'utf8');
-const autoLayout = app.slice(app.indexOf('async function autoLayout('), app.indexOf('autosave = new ViewAutosave'));
+const autoLayout = app.slice(app.indexOf('function rememberForcePositions('), app.indexOf('const compute = new GraphComputeCoordinator'))
+  + app.slice(app.indexOf('async function autoLayout('), app.indexOf('async function applyBrowsingWorkspace('));
 
 test('自动排版与路由缓存只消费显示投影：隐藏的 is-a 父概念不参与布局或路线', async () => {
   const taxonomy = {
@@ -50,40 +51,59 @@ test('自动排版与路由缓存只消费显示投影：隐藏的 is-a 父概�
   assert.deepEqual(expanded.nodes.map(node => node.id), ['child', 'parent', 'effect']);
 });
 
-test('自动布局计算失败时不提交几何，也不触发草稿自动保存', async () => {
-  const calls = [];
-  const error = Object.assign(new Error('读取图 自动布局输入 的边 a-b 缺少目标节点：absent'), { code: 'READ_GRAPH_MISSING_ENDPOINT' });
+function harness() {
+  const calls = { commits: [], saves: [], fits: 0, engines: [], errors: [] };
   const context = vm.createContext({
-    graph, arranging: false, legacy: false, autosave: { blocked: false }, arrangeSequence: 0,
-    busy: () => false, definitionMode: () => false, viewMode: () => false, dirty: () => true,
-    projection: () => positions, graphGeometryKey: () => 'geometry', displayGraphOf: () => graph,
-    runGraphCompute: async () => { throw error; },
-    commitSettledGeometry: async () => calls.push('commit'),
-    canvas: { selectedIds: () => [], routed: new Map(), fit: () => calls.push('fit') },
-    updateStatus: () => calls.push('status'), computeCancelled: () => false,
-    saveDraft: async () => calls.push('save'),
+    graph, arranging: false, forceSession: null, forceLayouts: new Map(), saveFailure: { blocked: false },
+    busy: () => false, definitionMode: () => false, overviewMode: () => false, forceMode: () => true, dirty: () => true, contextKey: () => 'mechanic/a',
+    projection: () => positions, displayGraphOf: () => graph, forceTopologyKey: value => JSON.stringify(value),
+    clone: structuredClone, json: JSON.stringify, isEndpointProjection: () => false,
+    createForceSimulation: callbacks => {
+      const engine = {
+        start(input) { this.input = structuredClone(input); this.positions = structuredClone(input.positions); if (context.startFailure) throw context.startFailure; },
+        stop() {}, getPositions() { return structuredClone(this.positions); },
+        tick(next) { this.positions = structuredClone(next); callbacks.onTick({ positions: structuredClone(next) }); },
+        settle() { callbacks.onSettle({ positions: structuredClone(this.positions) }); },
+      };
+      calls.engines.push(engine); return engine;
+    },
+    edit: (change, options) => {
+      const draft = { positions: structuredClone(positions) }; change(draft);
+      calls.commits.push({ draft, options: structuredClone(options) });
+    },
+    canvas: { positions: structuredClone(positions), camera: { x: 0, y: 0, scale: 1 }, forceFrameVersion: 1,
+      selectedIds: () => ['b'], fit() { calls.fits++; }, updateForcePositions() {} },
+    updateStatus() {}, showError: error => calls.errors.push(error),
+    saveDraft: async options => calls.saves.push({ options: structuredClone(options), arranging: context.arranging }),
   });
   vm.runInContext(autoLayout, context);
-  await assert.rejects(vm.runInContext('autoLayout({ fitView: true })', context), { code: 'READ_GRAPH_MISSING_ENDPOINT' });
-  await new Promise(resolve => setImmediate(resolve));
-  assert.deepEqual(calls, ['status', 'status']);
+  return { context, calls, run: code => vm.runInContext(code, context), engine: () => calls.engines.at(-1) };
+}
+
+test('自动布局模拟启动失败时不提交几何，也不触发草稿自动保存', async () => {
+  const { context, calls, run } = harness();
+  context.startFailure = Object.assign(new Error('读取图 自动布局输入 的边 a-b 缺少目标节点：absent'), { code: 'READ_GRAPH_MISSING_ENDPOINT' });
+  await assert.rejects(run('autoLayout({ fitView: true })'), { code: 'READ_GRAPH_MISSING_ENDPOINT' });
+  assert.deepEqual(calls.commits, []); assert.deepEqual(calls.saves, []);
   assert.equal(context.arranging, false);
 });
 
-test('机制图自动整理先释放 arranging 再以非阻塞方式自动保存', async () => {
-  const calls = [];
-  const context = vm.createContext({
-    graph, arranging: false, legacy: false, autosave: { blocked: false }, arrangeSequence: 0,
-    busy: () => false, definitionMode: () => false, viewMode: () => false, dirty: () => true,
-    projection: () => positions, graphGeometryKey: () => 'geometry', displayGraphOf: () => graph,
-    runGraphCompute: async request => { calls.push(['compute', request.payload.selectedIds]); return { positions, routes: [] }; },
-    commitSettledGeometry: async () => { calls.push(['commit']); },
-    canvas: { selectedIds: () => [], routed: new Map(), fit: () => calls.push(['fit']) },
-    updateStatus: () => calls.push(['status']), computeCancelled: () => false,
-    saveDraft: async options => calls.push(['save', options, context.arranging]),
-  });
-  vm.runInContext(autoLayout, context);
-  await vm.runInContext('autoLayout({ fitView: true })', context);
+test('机制自动整理只把选中范围交给持续模拟，收敛后释放 arranging 再非阻塞保存', async () => {
+  const { context, calls, run, engine } = harness();
+  const arranged = run('autoLayout({ fitView: true })');
+  assert.equal(context.arranging, true);
+  assert.deepEqual(engine().input.graph, graph);
+  assert.deepEqual(engine().input.selectedIds, ['b']);
+  assert.deepEqual(calls.commits, []); assert.deepEqual(calls.saves, []);
+  const next = { a: positions.a, b: { x: 500, y: 100 } };
+  engine().tick(next);
+  assert.deepEqual(calls.commits, []); assert.deepEqual(calls.saves, []);
+  engine().settle();
+  assert.equal(await arranged, true);
   await new Promise(resolve => setImmediate(resolve));
-  assert.deepEqual(structuredClone(calls), [['status'], ['compute', []], ['commit'], ['fit'], ['status'], ['save', { blocking: false }, false]]);
+  assert.equal(calls.commits.length, 1);
+  assert.deepEqual(calls.commits[0].draft.positions, next);
+  assert.equal(context.arranging, false);
+  assert.equal(calls.fits, 1);
+  assert.deepEqual(calls.saves, [{ options: { blocking: false }, arranging: false }]);
 });

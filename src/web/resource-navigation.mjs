@@ -70,15 +70,6 @@ function publicRow(row) {
   return result;
 }
 
-function viewRow(row) {
-  const registrations = row.resource.mechanicRegistrations ?? [];
-  return publicRow({
-    ...row,
-    registeredCount: registrations.length,
-    visibleCount: registrations.filter(item => item.visible).length,
-  });
-}
-
 function mechanicRow(row, commonRoot = '') {
   return publicRow({
     ...row,
@@ -123,16 +114,6 @@ function directoryTree(rows, commonRoot, directories) {
   return materialize(root);
 }
 
-export function buildViewNavigation(workspace, { query = '', currentId = null, recentIds = [] } = {}) {
-  const rows = baseRows(workspace.views ?? [], resourceFiles(workspace, 'view'), 'view', currentId, recentIds).sort(compareRows);
-  return {
-    query: text(query),
-    totalCount: rows.length,
-    matchCount: rows.filter(row => matches(row, query)).length,
-    items: rows.filter(row => matches(row, query)).map(viewRow),
-  };
-}
-
 export function buildMechanicNavigation(workspace, { query = '', currentId = null, recentIds = [] } = {}) {
   const rows = baseRows(workspace.mechanics ?? [], resourceFiles(workspace, 'mechanic'), 'mechanic', currentId, recentIds).sort(compareRows);
   const directories = (workspace.directories ?? []).map(normalizedPath);
@@ -146,15 +127,5 @@ export function buildMechanicNavigation(workspace, { query = '', currentId = nul
     featured: searching ? [] : rows.filter(row => row.current || row.recent).map(row => mechanicRow(row, commonRoot)),
     items: searching ? rows.filter(row => matches(row, query)).map(row => mechanicRow(row, commonRoot)) : [],
     tree: searching ? [] : directoryTree(rows, commonRoot, directories),
-  };
-}
-
-export function buildResourceNavigation(workspace, {
-  viewQuery = '', mechanicQuery = '', currentViewId = null, currentMechanicId = null,
-  recentViewIds = [], recentMechanicIds = [],
-} = {}) {
-  return {
-    views: buildViewNavigation(workspace, { query: viewQuery, currentId: currentViewId, recentIds: recentViewIds }),
-    mechanics: buildMechanicNavigation(workspace, { query: mechanicQuery, currentId: currentMechanicId, recentIds: recentMechanicIds }),
   };
 }

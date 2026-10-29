@@ -47,7 +47,7 @@ export class ConceptDocsPage {
       append('机制文档索引', null, currentDocument.kind === 'index');
       for (const document of documents.filter(item => !query || [item.id, item.label, item.scope].join(' ').toLowerCase().includes(query))) {
         const label = document.kind === 'folder' ? document.id : document.label;
-        append(`${document.kind === 'folder' ? '▸ ' : document.kind === 'view' ? '◈ ' : ''}${label}`, { file: document.file }, currentDocument.file === document.file);
+        append(`${document.kind === 'folder' ? '▸ ' : ''}${label}`, { file: document.file }, currentDocument.file === document.file);
       }
       append('概念词典', { file: 'concepts.md' }, currentDocument.kind === 'concepts');
       if (query) for (const concept of concepts.filter(item => [item.id, item.label, ...item.aliases].join(' ').toLowerCase().includes(query))) {
@@ -117,18 +117,21 @@ export class ConceptDocsPage {
     article.append(refresh); this.root.append(article);
   }
   renderSettings(data, draft) {
+    draft = draft.filter(item => item.kind !== 'view');
     this.root.replaceChildren();
     const aside = document.createElement('aside'); aside.className = 'concept-doc-tree export-source-tree';
     const back = text('button', '返回文档', 'quiet'); back.type = 'button'; aside.append(back);
     const article = document.createElement('article'); article.className = 'concept-doc-article export-settings'; article.append(text('h1', '导出设置'));
-    article.append(text('p', '选择文件夹会将其直接机制图合并为一篇文档；子文件夹不会递归包含。视图始终独立导出。', 'note'));
+    article.append(text('p', '选择文件夹会将其直接机制图合并为一篇文档；子文件夹不会递归包含。', 'note'));
+    if (data.selections.some(item => item.kind === 'view')) article.append(text('p', '网页导出只使用机制和文件夹。保存当前设置时，将移除原设置中的视图文件选项。', 'note'));
     const preview = document.createElement('section'); preview.className = 'export-preview';
     const summary = document.createElement('aside'); summary.className = 'concept-doc-outline export-summary';
-    const selections = () => new Set(draft.map(item => item.kind === 'folder' ? `folder:${item.folder}` : item.kind === 'mechanic' ? `mechanic:${item.mechanicId}` : `view:${item.viewId}`));
+    const selectionKey = item => item.kind === 'folder' ? `folder:${item.folder}` : `mechanic:${item.mechanicId}`;
+    const selections = () => new Set(draft.map(selectionKey));
     const selected = selections();
     const update = item => {
-      const key = item.kind === 'folder' ? `folder:${item.folder}` : item.kind === 'mechanic' ? `mechanic:${item.mechanicId}` : `view:${item.viewId}`;
-      draft = selected.has(key) ? draft.filter(candidate => (candidate.kind === 'folder' ? `folder:${candidate.folder}` : candidate.kind === 'mechanic' ? `mechanic:${candidate.mechanicId}` : `view:${candidate.viewId}`) !== key) : [...draft, item];
+      const key = selectionKey(item);
+      draft = selected.has(key) ? draft.filter(candidate => selectionKey(candidate) !== key) : [...draft, item];
       this.exportSettingsScrollTop = aside.scrollTop;
       this.renderSettings(data, draft);
     };
@@ -147,7 +150,7 @@ export class ConceptDocsPage {
       const copy = document.createElement('span'); copy.append(text('strong', label)); if (detail || reason) copy.append(text('small', reason || detail)); copy.onclick = () => { if (!input.disabled) input.click(); };
       row.append(input, copy); parent.append(row); return row;
     };
-    const filter = document.createElement('input'); filter.type = 'search'; filter.placeholder = '搜索文件夹、机制图或视图'; aside.append(filter);
+    const filter = document.createElement('input'); filter.type = 'search'; filter.placeholder = '搜索文件夹或机制图'; aside.append(filter);
     const sourceList = document.createElement('div'); aside.append(sourceList);
     const drawSources = () => { sourceList.replaceChildren(); const query = filter.value.trim().toLowerCase();
       const matches = value => !query || value.toLowerCase().includes(query);
@@ -167,10 +170,8 @@ export class ConceptDocsPage {
       }
       const rootMechanics = data.mechanics.filter(item => !item.folder && matches(item.name)); if (rootMechanics.length) sourceList.append(text('p', '未归类机制图', 'export-group-label'));
       for (const mechanic of rootMechanics) addCheck(sourceList, mechanic.name, { kind: 'mechanic', mechanicId: mechanic.id }, selected.has(`mechanic:${mechanic.id}`), false, '单独导出为一篇文档');
-      const views = data.views.filter(item => matches(item.name)); if (views.length) sourceList.append(text('p', '视图（独立导出）', 'export-group-label'));
-      for (const view of views) addCheck(sourceList, view.name, { kind: 'view', viewId: view.id }, selected.has(`view:${view.id}`), false, `包含 ${view.mechanicIds.length} 个可见机制图`);
     }; filter.oninput = drawSources; drawSources();
-    const selectedItems = draft.map(item => item.kind === 'folder' ? `文件夹：${item.folder}` : item.kind === 'mechanic' ? `机制图：${data.mechanics.find(x => x.id === item.mechanicId)?.name ?? item.mechanicId}` : `视图：${data.views.find(x => x.id === item.viewId)?.name ?? item.viewId}`);
+    const selectedItems = draft.map(item => item.kind === 'folder' ? `文件夹：${item.folder}` : `机制图：${data.mechanics.find(x => x.id === item.mechanicId)?.name ?? item.mechanicId}`);
     preview.append(text('h2', '选择影响'));
     preview.append(text('p', selectedItems.length ? `当前范围会生成 ${selectedItems.length} 篇机制文档。` : '尚未选择导出范围；生成后不会包含规则正文。', 'note'));
     for (const item of selectedItems) preview.append(text('p', item, 'export-preview-item'));

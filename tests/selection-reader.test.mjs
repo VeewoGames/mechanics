@@ -25,9 +25,9 @@ test('详情栏折叠状态与 hover 开关均通过浏览器偏好保留', () =
   assert.match(css, /#inspector\.is-collapsed\{display:grid;width:38px;height:38px/);
 });
 
-test('节点颜色与风格只读取当前机制图或视图的呈现记录，并提供八格低饱和色板', () => {
-  assert.match(app, /viewMode\(\) \? viewNodeColors : draft\?\.nodeColors \?\? \{\}/);
-  assert.match(app, /viewMode\(\) \? viewNodeStyles : draft\?\.nodeStyles \?\? \{\}/);
+test('节点颜色与风格只读取当前机制草稿，总览无草稿时使用默认呈现，并提供八格低饱和色板', () => {
+  assert.match(app, /nodeColors: draft\?\.nodeColors \?\? \{\}/);
+  assert.match(app, /nodeStyles: draft\?\.nodeStyles \?\? \{\}/);
   assert.match(app, /const NODE_COLOR_OPTIONS = \[/);
   assert.match(app, /const NODE_STYLE_OPTIONS = \[/);
   assert.equal([...app.matchAll(/\{ color: /g)].length >= 8, true);
@@ -39,15 +39,15 @@ test('节点颜色与风格只读取当前机制图或视图的呈现记录，�
 });
 
 test('节点不再由来源机制推导引用样式或编辑权限，位置只写入当前画布', () => {
-  assert.match(app, /画布节点的位置只写入当前机制图或视图/);
-  assert.match(app, /canMove: id => !busy\(\) && !autosave\.blocked && !legacy && !definitionMode\(\) && !!graph\?\.nodes\.some/);
+  assert.match(app, /canMove: id => !busy\(\) && !saveFailure\.blocked && !definitionMode\(\) && !!graph\?\.nodes\.some/);
   assert.doesNotMatch(canvas, /own = this\.activeId|edge-line[^`]*reference|node \$\{own/);
   assert.match(app, /const direct = edge\.steps\.length === 1/);
   assert.doesNotMatch(app, /视图中的源规则只读/);
 });
 
-test('多选节点可批量保存当前机制图或视图的颜色与风格', () => {
-  const section = app.slice(app.indexOf("if (selection.type === 'nodes')"), app.indexOf("if (selection.type === 'edge')"));
+test('多选节点可批量保存当前机制图的颜色与风格', () => {
+  const inspector = app.slice(app.indexOf('function inspect()'), app.indexOf('async function editConcept('));
+  const section = inspector.slice(inspector.indexOf("if (selection.type === 'nodes')"), inspector.indexOf("if (selection.type === 'edge')"));
   assert.match(section, /const ids = selection\.ids\.filter/);
   assert.match(section, /for \(const id of ids\) if \(style === 'solid'\) delete data\.nodeStyles\[id\]/);
   assert.match(section, /for \(const id of ids\) if \(color\) data\.nodeColors\[id\] = color/);

@@ -102,12 +102,13 @@ try {
   const post = (path, body) => fetch(origin + path, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
   const openResponse = await post('/api/project/open', { projectRoot: workspace });
   assert.equal(openResponse.status, 200, await openResponse.clone().text());
-  for (const asset of ['/', '/app.mjs', '/canvas.mjs', '/glossary.mjs', '/view-files.mjs', '/graph-compute.mjs',
+  for (const asset of ['/', '/app.mjs', '/canvas.mjs', '/glossary.mjs', '/mechanic-files.mjs', '/overview.mjs', '/force-simulation.mjs', '/force-geometry.mjs', '/graph-compute.mjs',
     '/graph-compute-kernel.mjs', '/graph-compute-worker.js', '/geometry-settle.mjs', '/hierarchical-layout.mjs', '/layout-structure.mjs', '/local-routing.mjs', '/flow-refinement.mjs', '/style.css',
     '/icons/eye.svg', '/icons/eye-off.svg',
     '/vendor/elk.js', '/vendor/elk-worker.js', '/vendor/webcola.js', '/vendor/libavoid/index.js', '/vendor/libavoid/libavoid.wasm', '/domain/graph.mjs', '/domain/view.mjs', '/domain/read-graph-integrity.mjs']) {
     assert.equal((await fetch(origin + asset)).status, 200, asset);
   }
+  assert.equal((await fetch(origin + '/view-files.mjs')).status, 404, '安装包不再提供网页视图文件模块');
   const response = await fetch(origin + '/api/workspace');
   assert.equal(response.status, 200);
   const opened = await response.json();

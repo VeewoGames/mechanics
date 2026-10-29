@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { buildMechanicNavigation, buildResourceNavigation, buildViewNavigation } from '../src/web/resource-navigation.mjs';
+import { buildMechanicNavigation } from '../src/web/resource-navigation.mjs';
 
 const view = (id, name, registrations = []) => ({ id, name, mechanicRegistrations: registrations });
 const mechanic = (id, name, scope = '测试范围') => ({ id, name, scope });
@@ -36,32 +36,7 @@ test('机制移动后目录依据新路径投影，保留旧空目录且视图�
   assert.deepEqual(workspace.views[0].mechanicRegistrations, registrations);
 });
 
-test('视图查询独立匹配名称、ID、完整路径，当前与最近顺序稳定并提供计数和同名消歧', () => {
-  const workspace = {
-    views: [
-      view('battle-a', '战斗', [{ mechanicId: 'one', visible: true }, { mechanicId: 'two', visible: false }]),
-      view('battle-b', '战斗', [{ mechanicId: 'two', visible: true }]),
-      view('world', '世界'),
-    ],
-    files: [
-      file('view', 'battle-a', 'views/章节一/战斗.view.json'),
-      file('view', 'battle-b', 'views/章节二/战斗.view.json'),
-      file('view', 'world', 'views/world.view.json'),
-    ],
-  };
-  const all = buildViewNavigation(workspace, { currentId: 'battle-b', recentIds: ['world', 'battle-a'] });
-  assert.deepEqual(all.items.map(item => item.id), ['world', 'battle-a', 'battle-b']);
-  assert.deepEqual(all.items.find(item => item.id === 'battle-b'), {
-    kind: 'view', id: 'battle-b', name: '战斗', fullPath: 'views/章节二/战斗.view.json', duplicateName: true,
-    disambiguationPath: 'views/章节二/战斗.view.json', current: true, recent: false, recentRank: null,
-    registeredCount: 1, visibleCount: 1,
-  });
-  assert.deepEqual(buildViewNavigation(workspace, { query: 'battle-a' }).items.map(item => item.id), ['battle-a']);
-  assert.deepEqual(buildViewNavigation(workspace, { query: '章节二' }).items.map(item => item.id), ['battle-b']);
-  assert.deepEqual(buildViewNavigation(workspace, { query: '世界' }).items.map(item => item.id), ['world']);
-});
-
-test('机制库与视图列表始终按侧栏显示名称排序，不受创建或最近打开顺序影响', () => {
+test('机制库始终按侧栏显示名称排序，不受创建或最近打开顺序影响', () => {
   const workspace = {
     views: [view('late', '先创建'), view('early', '后创建')],
     mechanics: [mechanic('late-mechanic', '先创建'), mechanic('early-mechanic', '后创建')],
@@ -70,19 +45,18 @@ test('机制库与视图列表始终按侧栏显示名称排序，不受创建�
       file('mechanic', 'late-mechanic', 'mechanics/任意/zeta.mechanic.json'), file('mechanic', 'early-mechanic', 'mechanics/任意/alpha.mechanic.json'),
     ],
   };
-  assert.deepEqual(buildViewNavigation(workspace).items.map(item => item.id), ['early', 'late']);
   assert.deepEqual(treeMechanics(buildMechanicNavigation(workspace).tree).map(item => item.id), ['early-mechanic', 'late-mechanic']);
 });
 
 test('显示名称排序优先于技术文件名，同名才按文件路径稳定消歧', () => {
   const workspace = {
-    views: [view('later', '20 回澜剑诀'), view('earlier', '03 剑式位视图'), view('same-a', '同名'), view('same-b', '同名')],
+    mechanics: [mechanic('later', '20 通用效果'), mechanic('earlier', '03 通用机制'), mechanic('same-a', '同名'), mechanic('same-b', '同名')],
     files: [
-      file('view', 'later', 'views/alpha.view.json'), file('view', 'earlier', 'views/zeta.view.json'),
-      file('view', 'same-a', 'views/a.view.json'), file('view', 'same-b', 'views/b.view.json'),
+      file('mechanic', 'later', 'mechanics/alpha.mechanic.json'), file('mechanic', 'earlier', 'mechanics/zeta.mechanic.json'),
+      file('mechanic', 'same-a', 'mechanics/a.mechanic.json'), file('mechanic', 'same-b', 'mechanics/b.mechanic.json'),
     ],
   };
-  assert.deepEqual(buildViewNavigation(workspace).items.map(item => item.id), ['earlier', 'later', 'same-a', 'same-b']);
+  assert.deepEqual(treeMechanics(buildMechanicNavigation(workspace).tree).map(item => item.id), ['earlier', 'later', 'same-a', 'same-b']);
 });
 
 test('机制空查询提供 current/recent 快捷项和压缩 mechanics 根的目录树，保留完整路径与 scope', () => {
@@ -126,7 +100,7 @@ test('机制查询返回不分页的扁平结果并始终用完整路径搜索�
   assert.deepEqual(buildMechanicNavigation(workspace, { query: '世界' }).items.map(item => item.id), ['world']);
 });
 
-test('100 视图和 200 机制投影完整、确定且视图与机制 query 互不串扰', () => {
+test('混有旧视图的工作区只投影 200 个机制，搜索结果完整且确定', () => {
   const views = Array.from({ length: 100 }, (_, index) => view(`view-${String(index).padStart(3, '0')}`, `视图 ${index}`,
     Array.from({ length: index % 5 }, (__, item) => ({ mechanicId: `mechanic-${item}`, visible: item % 2 === 0 }))));
   const mechanics = Array.from({ length: 200 }, (_, index) => mechanic(`mechanic-${String(index).padStart(3, '0')}`, `机制 ${index}`, `范围 ${index}`));
@@ -137,16 +111,11 @@ test('100 视图和 200 机制投影完整、确定且视图与机制 query 互�
       ...mechanics.map(item => file('mechanic', item.id, `mechanics/group-${Number(item.id.slice(-3)) % 10}/${item.id}.mechanic.json`)),
     ],
   };
-  const options = {
-    viewQuery: 'view-', mechanicQuery: 'mechanic-', currentViewId: 'view-099', currentMechanicId: 'mechanic-199',
-    recentViewIds: ['view-050', 'view-000'], recentMechanicIds: ['mechanic-150', 'mechanic-000'],
-  };
-  const first = buildResourceNavigation(workspace, options), second = buildResourceNavigation(workspace, options);
+  const options = { query: 'mechanic-', currentId: 'mechanic-199', recentIds: ['mechanic-150', 'mechanic-000'] };
+  const first = buildMechanicNavigation(workspace, options), second = buildMechanicNavigation(workspace, options);
   assert.deepEqual(first, second);
-  assert.equal(first.views.items.length, 100); assert.equal(first.mechanics.items.length, 200);
-  assert.deepEqual(first.views.items.slice(0, 3).map(item => item.id), ['view-000', 'view-001', 'view-002']);
-  assert.deepEqual(first.mechanics.items.slice(0, 3).map(item => item.id), ['mechanic-000', 'mechanic-001', 'mechanic-002']);
-  const separated = buildResourceNavigation(workspace, { viewQuery: 'view-099', mechanicQuery: 'mechanic-001' });
-  assert.deepEqual(separated.views.items.map(item => item.id), ['view-099']);
-  assert.deepEqual(separated.mechanics.items.map(item => item.id), ['mechanic-001']);
+  assert.equal(first.items.length, 200);
+  assert.deepEqual(first.items.slice(0, 3).map(item => item.id), ['mechanic-000', 'mechanic-001', 'mechanic-002']);
+  assert.deepEqual(buildMechanicNavigation(workspace, { query: 'view-099' }).items, []);
+  assert.deepEqual(buildMechanicNavigation(workspace, { query: 'mechanic-001' }).items.map(item => item.id), ['mechanic-001']);
 });

@@ -3,6 +3,7 @@ import { SNAP_GRID } from './layout-structure.mjs';
 import { affectedRouteIds } from './local-routing.mjs';
 import { edgeHoverDetail, nodeHoverDetail } from '../domain/hover-details.mjs';
 import { projectDisplayGraph } from '../domain/taxonomy-presentation.mjs';
+import { FORCE_DEFAULT_RADIUS, FORCE_PARALLEL_SPACING, forceEdgeGeometry, forceGraphRoutes, forceNodeProfiles, forceNodeRadii, forceEdgeRibbon, forceRoutePoint } from './force-geometry.mjs';
 
 export { graphGeometryKey } from './route-cache.mjs';
 
@@ -38,6 +39,36 @@ export function badgeDisplayModel(badges, mode = 'line') {
 }
 
 const WIDTH = 166, HEIGHT = 62;
+// 力导向圆形节点的配色：作者选的节点色保留色相，静止时是柔和的浅色圆，聚焦时换成同色相的饱和色。
+const FORCE_LABEL_FONT = 12, FORCE_LABEL_MAX = 118;
+const forcePaletteCache = new Map();
+export function forceNodePalette(color) {
+  const key = typeof color === 'string' && /^#[0-9a-f]{6}$/iu.test(color) ? color.toLowerCase() : '';
+  if (forcePaletteCache.has(key)) return forcePaletteCache.get(key);
+  let hue = 160, saturation = .26;
+  if (key) {
+    const [r, g, b] = [1, 3, 5].map(index => parseInt(key.slice(index, index + 2), 16) / 255);
+    const max = Math.max(r, g, b), min = Math.min(r, g, b), delta = max - min, lightness = (max + min) / 2;
+    if (delta > .004) {
+      hue = (max === r ? ((g - b) / delta + 6) % 6 : max === g ? (b - r) / delta + 2 : (r - g) / delta + 4) * 60;
+      saturation = Math.max(.24, Math.min(.5, delta / (1 - Math.abs(2 * lightness - 1)) * .6));
+    } else saturation = .04;
+  }
+  const hsl = (s, l) => `hsl(${Math.round(hue)} ${Math.round(s * 100)}% ${Math.round(l * 100)}%)`;
+  const palette = { fill: hsl(saturation, .8), stroke: hsl(saturation * .9, .6), vivid: hsl(Math.min(.62, saturation + .2), .52),
+    // 档位色：普通更淡退后，次级更饱和，核心最饱和并带同色外晕。
+    soft: hsl(saturation * .85, .86), softStroke: hsl(saturation * .8, .68),
+    secondary: hsl(Math.min(.58, saturation + .1), .68), secondaryStroke: hsl(Math.min(.6, saturation + .12), .44),
+    core: hsl(Math.min(.62, saturation + .18), .56), coreStroke: hsl(Math.min(.64, saturation + .2), .34), halo: hsl(Math.min(.62, saturation + .18), .6) };
+  forcePaletteCache.set(key, palette); return palette;
+}
+// 力导向连线静止时统一用中性灰（参照 MemoryGraph 的 rgba(60,66,78)），关系类型颜色只用于聚焦与选中。
+const FORCE_EDGE_REST = 'rgb(60,66,78)';
+const FORCE_RELATION_COLORS = Object.freeze({ positive: '#328577', negative: '#bd7064', random: '#8b6fb3', specializes: '#c49a26', 'part-of': '#4f7f9a', 'empty-rule': '#9a9fa6' });
+const hexAlpha = (color, amount, base) => {
+  const mix = (index, from) => Math.round(parseInt(from.slice(index, index + 2), 16) * (1 - amount) + parseInt(color.slice(index, index + 2), 16) * amount);
+  return `rgb(${mix(1, base)},${mix(3, base)},${mix(5, base)})`;
+};
 // 节点卡片内的文字只做展示估宽：CJK 与全角按 1em，其余按经验比例；节点尺寸本身不随文字变化。
 const NODE_TEXT_X = 12, NODE_LABEL_FONT = 13;
 const CHIP_FONT = 10, CHIP_HEIGHT = 16, CHIP_PADDING = 6, CHIP_GAP = 4, CHIP_MORE_WIDTH = 26, CHIP_SHARED_MAX = 92;
@@ -2013,19 +2044,25 @@ export function edgeGeometry(a, b, source, target, offset = 0) {
     labelX: (x1 + 3 * c1.x + 3 * c2.x + x2) / 8, labelY: (y1 + 3 * c1.y + 3 * c2.y + y2) / 8 - 7 };
 }
 
-export function nodesInBox(nodes, positions, start, end) {
+export function nodesInBox(nodes, positions, start, end, radii = null) {
   const left = Math.min(start.x, end.x), right = Math.max(start.x, end.x);
   const top = Math.min(start.y, end.y), bottom = Math.max(start.y, end.y);
   return nodes.filter(node => {
     const p = positions[node.id];
+    if (radii) {
+      // 圆形节点：框与圆相交才算选中，圆外的锚定框空白不参与。
+      const radius = radii.get(node.id) ?? FORCE_DEFAULT_RADIUS, cx = p.x + WIDTH / 2, cy = p.y + HEIGHT / 2;
+      const dx = cx - Math.max(left, Math.min(cx, right)), dy = cy - Math.max(top, Math.min(cy, bottom));
+      return dx * dx + dy * dy <= radius * radius;
+    }
     return p.x <= right && p.x + WIDTH >= left && p.y <= bottom && p.y + HEIGHT >= top;
   }).map(node => node.id);
 }
-export function movePositions(positions, dx, dy) {
+export function movePositions(positions, dx, dy, { round = true } = {}) {
   const points = Object.values(positions);
   if (!points.length) return {};
   const clamp = (delta, key) => Math.max(-100000 - Math.min(...points.map(p => p[key])),
-    Math.min(100000 - Math.max(...points.map(p => p[key])), Math.round(delta)));
+    Math.min(100000 - Math.max(...points.map(p => p[key])), round ? Math.round(delta) : delta));
   dx = clamp(dx, 'x'); dy = clamp(dy, 'y');
   return Object.fromEntries(Object.entries(positions).map(([id, p]) => [id, { x: p.x + dx, y: p.y + dy }]));
 }
@@ -2076,20 +2113,29 @@ export class GraphCanvas {
     this.tooltip = root.parentElement?.querySelector('#canvas-tooltip') ?? null;
     this.tooltipsEnabled = true;
     this.tooltipPointer = null;
+    this.layoutMode = 'orthogonal';
+    this.forceFrameVersion = 0;
     root.addEventListener('wheel', event => {
       event.preventDefault(); const rect = root.getBoundingClientRect();
       this.zoom(Math.exp(-event.deltaY * .0015), event.clientX - rect.left, event.clientY - rect.top);
     }, { passive: false });
     root.addEventListener('pointerdown', event => this.down(event));
-    root.addEventListener('pointermove', event => { this.move(event); this.moveTooltip(event); });
-    root.addEventListener('pointerover', event => this.showTooltip(event));
-    root.addEventListener('pointerout', event => this.hideTooltip(event));
+    root.addEventListener('pointermove', event => {
+      this.move(event);
+      if (this.layoutMode !== 'force') this.moveTooltip(event);
+      else if (!this.gesture) this.moveRasterHover(event);
+    });
+    // 力导向画面只有一张 Canvas：悬停目标由命中测试得出，不依赖 DOM 的 over/out 事件。
+    root.addEventListener('pointerover', event => { if (this.layoutMode !== 'force') this.showTooltip(event); });
+    root.addEventListener('pointerout', event => { if (this.layoutMode !== 'force') this.hideTooltip(event); });
+    root.addEventListener('pointerleave', () => this.clearRasterHover(true));
     root.addEventListener('pointerup', event => this.up(event));
     root.addEventListener('pointercancel', () => this.cancel());
     root.addEventListener('lostpointercapture', () => { if (this.gesture) this.cancel(); });
     root.addEventListener('contextmenu', event => event.preventDefault());
     root.addEventListener('keydown', event => {
       if (this.readOnly) return;
+      if (this.forceRasterActive && this.forceKeyboard(event)) return;
       if (event.key !== 'Enter') return;
       const node = event.target.closest('[data-node]');
       if (node) { event.preventDefault(); this.pick(node.dataset.node); }
@@ -2101,9 +2147,129 @@ export class GraphCanvas {
       if (event.code === 'Space' && !event.target.closest('input,textarea,select,dialog,button')) { event.preventDefault(); this.space = true; }
     });
     document.addEventListener('keyup', event => { if (event.code === 'Space') this.space = false; });
-    window.addEventListener('blur', () => { this.space = false; this.cancel(); });
+    document.addEventListener('visibilitychange', () => { if (!document.hidden && this.forceRasterActive) this.requestRasterDraw(); });
+    window.addEventListener('blur', () => { this.space = false; this.clearRasterHover(); this.cancel(); });
   }
-  tooltipTarget(event) { return event.target?.closest?.('[data-node],[data-edge]') ?? null; }
+  // 力导向画面的悬停目标来自命中测试：返回与 DOM 节点同形的轻量对象，提示文字按需生成并缓存。
+  tooltipTarget(event) {
+    if (this.forceRasterActive) {
+      if (!Number.isFinite(event?.clientX) || !Number.isFinite(event?.clientY)) return null;
+      const hit = this.hitForceRaster(event, true);
+      if (!hit || !this.forceHoverAllowed(hit.type, hit.id)) return null;
+      return hit.type === 'node' ? { dataset: { node: hit.id, tooltip: this.forceTooltip('node', hit.id) } }
+        : hit.type === 'edge' ? { dataset: { edge: hit.id, tooltip: this.forceTooltip('edge', hit.id) } } : null;
+    }
+    const target = event.target?.closest?.('[data-node],[data-edge]') ?? null;
+    if (target && this.layoutMode === 'force') {
+      const { node, edge } = target.dataset;
+      if (!this.forceHoverAllowed(node ? 'node' : 'edge', node ?? edge)) return null;
+    }
+    return target;
+  }
+  forceHoverAllowed(type, id) {
+    this.ensureForceIndex();
+    const { centers, relatedNodes, relatedEdges, attention } = this.forceFocusState();
+    if (!attention) return true;
+    return type === 'edge' ? relatedEdges.has(id) : (this.selection?.type === 'edge' ? relatedNodes : centers).has(id);
+  }
+  forceTooltip(type, id) {
+    const cache = this.forceTooltipCache ??= new Map(), key = type + ':' + id;
+    if (cache.has(key)) return cache.get(key);
+    let text = '';
+    if (type === 'node') { const node = this.forceNodeById?.get(id); text = node ? nodeHoverDetail(node) ?? '' : ''; }
+    else {
+      const edge = this.forceEdgeSlots?.get(id)?.edge;
+      if (edge) {
+        const name = nodeId => this.forceNodeById?.get(nodeId)?.label ?? this.callbacks?.name?.(nodeId) ?? nodeId;
+        const rules = edge.steps?.length ? edge.steps : [edge];
+        text = edgeHoverDetail({ ...edge, ruleText: rules.map(rule => rule.ruleText).filter(value => value?.trim()).join('\n\n') }, name, { includeRelation: Boolean(this.includeRelationInHover) }) ?? '';
+      }
+    }
+    cache.set(key, text); return text;
+  }
+  moveRasterHover(event) {
+    const target = this.tooltipTarget(event);
+    const node = target?.dataset?.node ?? null, edge = node ? null : target?.dataset?.edge ?? null;
+    this.root.classList?.toggle?.('force-hover', Boolean(target));
+    if (node === this.forceRasterHoverId && edge === this.forceHoverEdgeId) { this.moveTooltip(event); return; }
+    this.forceRasterHoverId = node; this.forceHoverEdgeId = edge;
+    if (this.layoutMode === 'force') this.requestRasterDraw();
+    if (target) this.showTooltip(event);
+    else { this.tooltipPointer = null; if (this.tooltip) this.tooltip.hidden = true; }
+  }
+  clearRasterHover(hideTooltip = false) {
+    const changed = this.forceRasterHoverId || this.forceHoverEdgeId;
+    this.forceRasterHoverId = null; this.forceHoverEdgeId = null;
+    this.root?.classList?.toggle?.('force-hover', false);
+    if (hideTooltip && this.tooltip) { this.tooltipPointer = null; this.tooltip.hidden = true; }
+    if (changed && this.layoutMode === 'force') this.requestRasterDraw();
+  }
+  // 查找结果与起点/终点提示由画布自己绘制：力导向画面没有逐节点 DOM 可加样式类。
+  setSearchMarks(ids = [], currentId = null) {
+    this.forceSearchIds = new Set(ids); this.forceSearchCurrent = currentId;
+    if (this.layoutMode === 'force') this.requestRasterDraw();
+  }
+  // 单画布没有逐节点焦点元素：方向键在当前概念附近按方向挑最近的概念并选中、居中可见；Enter 在连线模式下作为点击。
+  forceKeyboard(event) {
+    const arrows = { ArrowRight: [1, 0], ArrowLeft: [-1, 0], ArrowDown: [0, 1], ArrowUp: [0, -1] };
+    const ids = this.selectedIds(), currentId = this.linkSource && this.mode !== 'select' ? this.forceKeyboardId ?? this.linkSource : ids.at(-1) ?? this.forceKeyboardId;
+    if (event.key === 'Enter') {
+      const id = currentId && this.forceAdjacentEdges.has(currentId) ? currentId : null;
+      if (!id) return false;
+      event.preventDefault(); this.pick(id); return true;
+    }
+    const direction = arrows[event.key]; if (!direction || event.altKey || event.ctrlKey || event.metaKey) return false;
+    this.clearRasterHover(true);
+    event.preventDefault();
+    const origin = currentId && this.positions[currentId] ? this.positions[currentId] : null;
+    let best = null, bestScore = Infinity;
+    if (!origin) {
+      // 尚无焦点时取离视口中心最近的概念。
+      const center = this.center();
+      for (const id of this.forceNodeIds) { const p = this.positions[id]; const d = p ? Math.hypot(p.x + WIDTH / 2 - center.x, p.y + HEIGHT / 2 - center.y) : Infinity; if (d < bestScore) { best = id; bestScore = d; } }
+    } else for (const id of this.forceNodeIds) {
+      if (id === currentId) continue;
+      const p = this.positions[id]; if (!p) continue;
+      const dx = p.x - origin.x, dy = p.y - origin.y, along = dx * direction[0] + dy * direction[1];
+      if (along <= 1) continue;
+      const across = Math.abs(dx * direction[1] - dy * direction[0]), score = along + across * 2.2;
+      if (score < bestScore) { best = id; bestScore = score; }
+    }
+    if (!best) return true;
+    this.forceKeyboardId = best;
+    if (this.mode === 'select') this.selectNodes([best]); else this.requestRasterDraw();
+    this.ensureVisible(best);
+    const label = this.forceNodeById.get(best)?.label ?? best;
+    this.root.setAttribute?.('aria-label', `概念节点画布，当前：${label}`);
+    return true;
+  }
+  ensureVisible(id) {
+    const point = this.positions[id]; if (!point) return;
+    const frame = this.safeViewport(), { x, y, scale } = this.camera;
+    const sx = (point.x + WIDTH / 2) * scale + x, sy = (point.y + HEIGHT / 2) * scale + y;
+    if (sx >= frame.x && sx <= frame.x + frame.width && sy >= frame.y && sy <= frame.y + frame.height) return;
+    this.camera.x += frame.x + frame.width / 2 - sx; this.camera.y += frame.y + frame.height / 2 - sy; this.transform();
+  }
+  flashRoles(duration = 2400) {
+    this.forceRoleFlashStart = performance.now(); this.forceRoleFlashUntil = this.forceRoleFlashStart + duration;
+    this.forceRoles = this.nodeRoles();
+    if (this.layoutMode === 'force') this.requestRasterDraw();
+  }
+  applyAttention() {
+    if (this.layoutMode !== 'force') return;
+    if (this.forceRasterActive || !this.nodeElements?.size) { this.requestRasterDraw(); return; }
+    this.ensureForceIndex();
+    const { centers: centerIds, relatedNodes: nodeIds, relatedEdges: edgeIds, attention: active } = this.forceFocusState();
+    for (const [id, element] of this.nodeElements) {
+      element.classList.toggle('is-muted', active && !nodeIds.has(id));
+      element.classList.toggle('is-focus-center', centerIds.has(id));
+      element.classList.toggle('is-focus-neighbor', active && nodeIds.has(id) && !centerIds.has(id));
+    }
+    for (const [id, elements] of this.edgeElements) {
+      elements.group.classList.toggle('is-muted', active && !edgeIds.has(id));
+      elements.group.classList.toggle('is-related', active && edgeIds.has(id));
+    }
+  }
   setTooltipsEnabled(enabled) {
     this.tooltipsEnabled = Boolean(enabled);
     if (!this.tooltipsEnabled) {
@@ -2121,7 +2287,8 @@ export class GraphCanvas {
     };
     if (!this.tooltipsEnabled || event.pointerType && event.pointerType !== 'mouse') return;
     const target = this.tooltipTarget(event), text = target?.dataset.tooltip?.trim();
-    if (!this.tooltip || !text) return;
+    if (!this.tooltip) return;
+    if (!text) { this.tooltip.hidden = true; return; }
     this.tooltip.textContent = text; this.tooltip.hidden = false; this.moveTooltip(event);
   }
   hideTooltip(event) {
@@ -2137,17 +2304,25 @@ export class GraphCanvas {
     const top = Math.min(Math.max(margin, event.clientY - rect.top + margin), Math.max(margin, this.root.clientHeight - this.tooltip.offsetHeight - margin));
     this.tooltip.style.left = `${left}px`; this.tooltip.style.top = `${top}px`;
   }
-  update(graph, positions, activeId, selection, definitionMode, { preserveRoutes = false, deferRouting = false, structuralPresentation = 'line', taxonomyPresentation = null, retainedNodeIds = [], tagDefinitions = [], nodeColors = {}, nodeStyles = {} } = {}) {
+  update(graph, positions, activeId, selection, definitionMode, { preserveRoutes = false, deferRouting = false, structuralPresentation = 'line', taxonomyPresentation = null, retainedNodeIds = [], highlightDepth = 1, tagDefinitions = [], nodeColors = {}, nodeStyles = {}, layoutMode = 'orthogonal' } = {}) {
+    this.forceFrameVersion = (this.forceFrameVersion ?? 0) + 1;
     this.tagDefinitions = tagDefinitions;
     this.nodeColors = nodeColors;
     this.nodeStyles = nodeStyles;
     const pendingMove = this.pendingMove, previousGraph = this.graph, previousPositions = this.positions;
     // 显示投影必须先于几何签名：隐藏节点是否参与决定了几何是否真的改变。
     const displayGraph = projectDisplayGraph(graph, { taxonomyPresentation, structuralPresentation, retainedNodeIds });
-    const nextKey = graphGeometryKey(displayGraph, positions), geometryChanged = nextKey !== this.geometryKey;
+    this.highlightDepth = highlightDepth;
+    const modeChanged = (this.layoutMode ?? 'orthogonal') !== layoutMode;
+    const nextKey = graphGeometryKey(displayGraph, positions), geometryChanged = nextKey !== this.geometryKey || modeChanged;
     this.pendingMove = null;
     this.routed ??= new Map();
     this.routeArchive ??= new Map();
+    // 两种展示不能共用已显示的路线；返回正交视图时，仍可消费调用方刚恢复且精确匹配的缓存。
+    if (modeChanged) {
+      this.routed = new Map(); this.routeArchive.clear(); preserveRoutes = false;
+      if (layoutMode !== 'orthogonal' || this.primedRoutes?.key !== nextKey) this.primedRoutes = null;
+    }
     if (preserveRoutes) for (const [id, route] of this.routed) this.routeArchive.set(id, route);
     else this.routeArchive.clear();
     this.structuralPresentation = structuralPresentation; this.taxonomyPresentation = taxonomyPresentation; this.retainedNodeIds = retainedNodeIds;
@@ -2155,6 +2330,17 @@ export class GraphCanvas {
     // 端口计算或 Worker 路由，否则画布与连线会各自引用不同的图。
     this.displayGraph = displayGraph;
     this.graph = displayGraph; this.positions = positions; this.activeId = activeId; this.selection = selection; this.definitionMode = definitionMode;
+    this.layoutMode = layoutMode;
+    this.root?.classList?.toggle?.('force-graph', layoutMode === 'force');
+    if (layoutMode === 'force') {
+      // 力导向边是当前坐标的即时投影；旧正交缓存和异步路线不能覆盖这帧。
+      this.positions = Object.fromEntries(Object.entries(positions).map(([id, point]) => [id, { ...point }]));
+      this.ensureForceIndex();
+      this.routed = forceGraphRoutes(displayGraph, positions);
+      this.routeArchive.clear(); this.primedRoutes = null; this.unsettledRouteIds = new Set();
+      this.hideUnroutedEdges = false; this.routingErrorMessage = null; this.geometryKey = nextKey;
+      this.draw({ reroute: false }); return Promise.resolve(true);
+    }
     const primed = this.primedRoutes?.key === nextKey ? this.primedRoutes.routes : null;
     if (primed) this.routed = primed;
     this.primedRoutes = null;
@@ -2194,12 +2380,13 @@ export class GraphCanvas {
     this.primedRoutes = routes ? { key: graphGeometryKey(graph, positions), routes } : null;
   }
   requestRouting(geometryKey, movedIds = [], { fixedPositions = false, persistRouteCache = movedIds.length > 0, previousPositions = this.positions } = {}) {
+    if (this.layoutMode === 'force') return Promise.resolve(true);
     if (typeof this.callbacks.computeGraph !== 'function') return Promise.resolve(false);
     const payload = { graph: this.graph, positions: this.positions, previousPositions, cachedRoutes: [...this.routed], movedIds, fixedPositions };
     const promise = this.callbacks.computeGraph({ kind: 'route', geometryKey, payload,
-      isCurrent: () => this.geometryKey === geometryKey })
+      isCurrent: () => this.layoutMode !== 'force' && this.geometryKey === geometryKey })
       .then(result => {
-        if (this.geometryKey !== geometryKey) return false;
+        if (this.layoutMode === 'force' || this.geometryKey !== geometryKey) return false;
         if (typeof this.callbacks.commitGeometry === 'function') {
           return this.callbacks.commitGeometry({ baseGeometryKey: geometryKey, persistRouteCache, ...result });
         }
@@ -2210,7 +2397,7 @@ export class GraphCanvas {
       })
       .catch(error => {
         if (error?.name === 'AbortError' || error?.code === 'COMPUTE_CANCELLED') return false;
-        if (this.geometryKey !== geometryKey) return false;
+        if (this.layoutMode === 'force' || this.geometryKey !== geometryKey) return false;
         if (this.routingErrorMessage !== error.message) {
           this.routingErrorMessage = error.message; this.callbacks.routeError?.(error);
         }
@@ -2218,9 +2405,45 @@ export class GraphCanvas {
       });
     this.routingPromise = promise; return promise;
   }
-  setMode(mode) { this.cancel(); this.mode = mode; this.linkSource = null; this.root.classList.toggle('linking', mode !== 'select'); this.draw({ reroute: false }); }
+  setMode(mode) {
+    this.cancel(); this.mode = mode; this.linkSource = null; this.root.classList.toggle('linking', mode !== 'select');
+    if (this.layoutMode === 'force') this.updateSelection(this.selection); else this.draw({ reroute: false });
+  }
   selectedIds() { return this.selection?.type === 'nodes' ? this.selection.ids : this.selection?.type === 'node' ? [this.selection.id] : []; }
   selectNodes(ids) { this.callbacks.select(ids.length === 1 ? { type: 'node', id: ids[0] } : ids.length ? { type: 'nodes', ids } : null); }
+  updateSelection(value) {
+    this.selection = value;
+    if (this.layoutMode === 'force') this.refreshForceHover();
+    if (this.forceRasterActive) { this.requestRasterDraw(); return; }
+    const selected = new Set(this.selectedIds());
+    for (const [id, element] of this.nodeElements ?? []) {
+      element.classList.toggle('selected', selected.has(id));
+      element.classList.toggle('link-source', id === this.linkSource);
+    }
+    for (const [id, elements] of this.edgeElements ?? []) elements.line.classList.toggle('selected', value?.type === 'edge' && value.id === id);
+    this.applyAttention(); this.renderSelectionBox();
+  }
+  refreshForceHover() {
+    const pointer = this.tooltipPointer;
+    this.clearRasterHover(true);
+    if (pointer && !this.gesture) this.moveRasterHover(pointer);
+  }
+  setHighlightDepth(depth) {
+    if (depth !== null && ![1, 2, 3].includes(depth)) throw new Error('高亮层数只能为 1、2、3 或全部');
+    this.highlightDepth = depth;
+    this.refreshForceHover(); this.applyAttention();
+  }
+  renderSelectionBox() {
+    if (this.forceRasterActive) { this.selectionBox?.remove(); this.selectionBox = null; this.requestRasterDraw(); return; }
+    const gesture = this.gesture;
+    if (gesture?.type !== 'box' || !gesture.moved) { this.selectionBox?.remove(); this.selectionBox = null; return; }
+    if (!this.selectionBox) {
+      this.selectionBox = svg('rect', { class: 'selection-box', 'pointer-events': 'none' }); this.world.append(this.selectionBox);
+    }
+    const { point, end } = gesture;
+    for (const [key, value] of Object.entries({ x: Math.min(point.x, end.x), y: Math.min(point.y, end.y),
+      width: Math.abs(end.x - point.x), height: Math.abs(end.y - point.y) })) this.selectionBox.setAttribute(key, value);
+  }
   cancel() {
     this.linkSource = null; this.lastClick = null;
     const gesture = this.gesture; if (!gesture) return;
@@ -2228,6 +2451,12 @@ export class GraphCanvas {
     if (gesture.type === 'pan') this.camera = gesture.original;
     if (this.root.hasPointerCapture(gesture.pointerId)) this.root.releasePointerCapture(gesture.pointerId);
     this.root.classList.remove('panning');
+    if (gesture.type === 'nodes' && this.layoutMode === 'force') {
+      if (gesture.forceDragging && typeof this.callbacks.forceDragCancel === 'function') this.callbacks.forceDragCancel();
+      else if (gesture.forceDragging) this.updateForcePositions(gesture.original);
+      this.transform(); return;
+    }
+    if (this.layoutMode === 'force') { this.renderSelectionBox(); this.transform(); return; }
     if (gesture.type === 'nodes') { this.renderIncremental(gesture.ids, this.positions, this.positions); this.transform(); }
     else this.draw({ reroute: false });
   }
@@ -2237,6 +2466,7 @@ export class GraphCanvas {
   }
   down(event) {
     if (this.gesture || ![0, 1, 2].includes(event.button)) return;
+    this.clearRasterHover(true);
     // 对话 widget 复用同一画布投影，但只允许平移与缩放，绝不进入选中、连线或位置写入路径。
     if (this.readOnly) {
       event.preventDefault();
@@ -2244,7 +2474,11 @@ export class GraphCanvas {
       this.root.setPointerCapture(event.pointerId); this.root.classList.add('panning'); return;
     }
     if (event.ctrlKey || event.metaKey || event.altKey) { this.lastClick = null; return; }
-    const node = event.target.closest('[data-node]'), edge = event.target.closest('[data-edge]');
+    const chipTarget = event.button === 0 && !this.space ? this.forceChipAt(event) : null;
+    if (chipTarget) { event.preventDefault(); this.lastClick = null; this.callbacks.select({ type: 'node', id: chipTarget }); return; }
+    const rasterHit = this.forceRasterActive ? this.hitForceRaster(event, true) : null;
+    const node = rasterHit?.type === 'node' ? { dataset: { node: rasterHit.id } } : event.target.closest('[data-node]');
+    const edge = rasterHit?.type === 'edge' ? { dataset: { edge: rasterHit.id } } : event.target.closest('[data-edge]');
     if (event.button === 2 || event.button === 1 || this.space) {
       this.lastClick = null;
       event.preventDefault(); this.gesture = { type: 'pan', pointerId: event.pointerId, x: event.clientX, y: event.clientY, original: { ...this.camera }, moved: false };
@@ -2285,11 +2519,20 @@ export class GraphCanvas {
       const dx = event.clientX - gesture.x, dy = event.clientY - gesture.y;
       this.camera.x = gesture.original.x + dx; this.camera.y = gesture.original.y + dy; this.transform();
     } else if (gesture.type === 'box') {
-      gesture.end = this.point(event); this.draw({ reroute: false });
+      gesture.end = this.point(event);
+      if (this.layoutMode === 'force') this.renderSelectionBox(); else this.draw({ reroute: false });
     } else {
+      if (this.layoutMode === 'force' && !gesture.moved) return;
+      if (this.layoutMode === 'force' && !gesture.forceDragging) {
+        gesture.forceDragging = true;
+        this.callbacks.forceDragStart?.([...gesture.ids]);
+      }
       const point = this.point(event), dx = point.x - gesture.point.x, dy = point.y - gesture.point.y;
-      gesture.next = movePositions(gesture.original, dx, dy);
-      this.renderIncremental(gesture.ids, { ...this.positions, ...gesture.next }, this.positions);
+      gesture.next = movePositions(gesture.original, dx, dy, { round: this.layoutMode !== 'force' });
+      if (this.layoutMode === 'force') {
+        this.updateForcePositions(gesture.next);
+        this.callbacks.forceDragMove?.([...gesture.ids], gesture.next);
+      } else this.renderIncremental(gesture.ids, { ...this.positions, ...gesture.next }, this.positions);
     }
   }
   up(event) {
@@ -2298,12 +2541,21 @@ export class GraphCanvas {
     this.gesture = null; this.root.classList.remove('panning');
     if (this.root.hasPointerCapture(event.pointerId)) this.root.releasePointerCapture(event.pointerId);
     let positionCommitted = false;
-    if (gesture.type === 'nodes' && gesture.moved && gesture.ids.every(id => this.graph.nodes.some(node => node.id === id) && this.callbacks.canMove(id))) {
-      const committed = this.callbacks.snapEnabled?.() ? snapPositions(gesture.next) : gesture.next;
-      this.pendingMove = { ids: [...gesture.ids] };
-      this.callbacks.move(committed); positionCommitted = true;
+    if (gesture.type === 'nodes' && gesture.moved && gesture.ids.every(id => (this.layoutMode === 'force' ? this.forceAdjacentEdges.has(id) : this.graph.nodes.some(node => node.id === id)) && this.callbacks.canMove(id))) {
+      if (gesture.forceDragging && typeof this.callbacks.forceDragEnd === 'function') this.callbacks.forceDragEnd();
+      else {
+        const committed = this.layoutMode !== 'force' && this.callbacks.snapEnabled?.() ? snapPositions(gesture.next) : gesture.next;
+        this.pendingMove = { ids: [...gesture.ids] };
+        this.callbacks.move(committed);
+      }
+      positionCommitted = true;
     }
-    else if (gesture.type === 'box' && gesture.moved) this.selectNodes([...new Set([...gesture.original, ...nodesInBox(this.graph.nodes, this.positions, gesture.point, gesture.end)])]);
+    else if (gesture.forceDragging) {
+      if (typeof this.callbacks.forceDragCancel === 'function') this.callbacks.forceDragCancel();
+      else this.updateForcePositions(gesture.original);
+      positionCommitted = true;
+    }
+    else if (gesture.type === 'box' && gesture.moved) this.selectNodes([...new Set([...gesture.original, ...nodesInBox(this.graph.nodes, this.positions, gesture.point, gesture.end, this.layoutMode === 'force' ? this.forceRadii : null)])]);
     else if (gesture.type === 'pan' && gesture.clearSelectionOnClick && !gesture.moved) this.selectNodes([]);
     const blankPrimaryClick = gesture.type === 'pan' && gesture.clearSelectionOnClick && !gesture.moved;
     if (!gesture.moved && ((gesture.type === 'nodes' && gesture.ids.length === 1) || (gesture.type === 'box' && !gesture.additive) || blankPrimaryClick)) {
@@ -2314,25 +2566,28 @@ export class GraphCanvas {
         if (id === null) this.callbacks.blankDoubleClick?.(); else this.callbacks.quickLink?.(id);
       }
     } else this.lastClick = null;
-    if (!positionCommitted) this.draw({ reroute: false });
+    if (!positionCommitted) {
+      if (this.layoutMode === 'force') this.updateSelection(this.selection); else this.draw({ reroute: false });
+    }
   }
   pick(id) {
     if (this.mode === 'select') { this.callbacks.select({ type: 'node', id }); return; }
-    if (!this.linkSource) { this.linkSource = id; this.callbacks.hint('现在点击目标节点 · Esc 取消连线'); this.draw({ reroute: false }); }
+    if (!this.linkSource) { this.linkSource = id; this.callbacks.hint('现在点击目标节点 · Esc 取消连线'); }
     else if (this.linkSource === id) {
-      this.linkSource = null; this.callbacks.cancelLink?.(); this.draw({ reroute: false });
+      this.linkSource = null; this.callbacks.cancelLink?.();
     }
     else {
       const source = this.linkSource;
       // is-a 不再有连线模式，连线手势只产生影响符号。
       const relation = this.mode === 'positive' ? 1 : this.mode === 'negative' ? -1 : 'random';
       if (this.callbacks.link(source, id, relation)) this.linkSource = null;
-      this.draw({ reroute: false });
     }
+    if (this.layoutMode === 'force') this.updateSelection(this.selection); else this.draw({ reroute: false });
   }
   zoom(factor, x = this.root.clientWidth / 2, y = this.root.clientHeight / 2) {
     if (this.gesture) return;
-    const old = this.camera.scale, next = Math.max(.15, Math.min(2.5, old * factor));
+    const old = this.camera.scale, minimum = this.layoutMode === 'force' ? Math.min(.01, old) : .15;
+    const next = Math.max(minimum, Math.min(2.5, old * factor));
     this.camera.x = x - (x - this.camera.x) * next / old;
     this.camera.y = y - (y - this.camera.y) * next / old;
     this.camera.scale = next; this.transform();
@@ -2360,19 +2615,623 @@ export class GraphCanvas {
     if (!points.length) return;
     const minX = Math.min(...points.map(p => p.x)), minY = Math.min(...points.map(p => p.y));
     const width = Math.max(...points.map(p => p.x)) + WIDTH - minX, height = Math.max(...points.map(p => p.y)) + HEIGHT - minY;
+    if (this.layoutMode === 'force') {
+      const frame = this.safeViewport();
+      // 适应画布必须容纳整个图，超大图也不能因最低缩放限制压进浮动工具区域。
+      const scale = Math.min(1.2, frame.width / width, frame.height / height);
+      this.camera = { scale, x: frame.x + (frame.width - width * scale) / 2 - minX * scale,
+        y: frame.y + (frame.height - height * scale) / 2 - minY * scale };
+      this.transform(); return;
+    }
     const availableWidth = Math.max(200, this.root.clientWidth - 100), availableHeight = Math.max(200, this.root.clientHeight - 100);
     const scale = Math.max(.15, Math.min(1.2, availableWidth / width, availableHeight / height));
     this.camera = { scale, x: (this.root.clientWidth - width * scale) / 2 - minX * scale,
       y: (this.root.clientHeight - height * scale) / 2 - minY * scale };
     this.transform();
   }
+  safeViewport() {
+    const width = Math.max(1, this.root.clientWidth), height = Math.max(1, this.root.clientHeight);
+    if (this.layoutMode !== 'force') return { x: 0, y: 0, width, height };
+    const requested = this.callbacks?.getViewportInsets?.() ?? {};
+    const inset = (key, fallback) => Number.isFinite(requested[key]) ? Math.max(fallback, requested[key]) : fallback;
+    const left = inset('left', 32), right = inset('right', 32), top = inset('top', 100), bottom = inset('bottom', 110);
+    // 极小窗口无法容纳完整工具留白时，按比例收缩留白，仍保持有限的可见区域。
+    const horizontal = Math.min(1, (width - 1) / (left + right)), vertical = Math.min(1, (height - 1) / (top + bottom));
+    return { x: left * horizontal, y: top * vertical,
+      width: width - (left + right) * horizontal, height: height - (top + bottom) * vertical };
+  }
+  focusNode(id) {
+    if (this.gesture || !this.graph.nodes.some(node => node.id === id)) return false;
+    const point = this.positions[id];
+    if (!point || !Number.isFinite(point.x) || !Number.isFinite(point.y)) return false;
+    const frame = this.safeViewport();
+    const preferredScale = Math.max(.9, Math.min(1.4, this.camera.scale));
+    const scale = this.layoutMode === 'force' ? Math.min(preferredScale, frame.width / WIDTH, frame.height / HEIGHT) : preferredScale;
+    this.camera = { scale, x: frame.x + frame.width / 2 - (point.x + WIDTH / 2) * scale,
+      y: frame.y + frame.height / 2 - (point.y + HEIGHT / 2) * scale };
+    this.transform(); return true;
+  }
   center() { return this.point({ clientX: this.root.getBoundingClientRect().left + this.root.clientWidth * .45, clientY: this.root.getBoundingClientRect().top + this.root.clientHeight * .4 }); }
   transform() {
     this.world?.setAttribute('transform', `translate(${this.camera.x} ${this.camera.y}) scale(${this.camera.scale})`);
+    this.root.classList?.toggle?.('force-compact', this.layoutMode === 'force' && this.camera.scale < .45);
+    this.root.classList?.toggle?.('force-minimal', this.layoutMode === 'force' && this.camera.scale < .22);
+    const wasRaster = this.forceRasterActive;
+    this.syncForceRasterMode();
+    if (this.forceRasterActive) this.requestRasterDraw();
+    else if (this.layoutMode === 'force' && wasRaster && !this.nodeElements?.size) { this.draw({ reroute: false }); return; }
+    else if (this.layoutMode === 'force') this.refreshForceVisibility();
     this.callbacks.zoom(Math.round(this.camera.scale * 100));
+  }
+  ensureForceIndex() {
+    if (this.forceIndexGraph === this.graph) return;
+    this.forceIndexGraph = this.graph;
+    this.forceNodeIds = this.graph.nodes.map(node => node.id);
+    this.forceNodeById = new Map(this.graph.nodes.map(node => [node.id, node]));
+    this.forceAdjacentEdges = new Map(this.forceNodeIds.map(id => [id, []]));
+    this.forceEdgeSlots = new Map(); this.forceRasterRouteCache = new Map(); this.forceHubSet = null;
+    this.forceProfiles = forceNodeProfiles(this.graph);
+    this.forceRadii = new Map([...this.forceProfiles].map(([id, profile]) => [id, profile.radius])); this.forceRasterLabels = new Map(); this.forceNodeOrder = null; this.forceHitIndex = null;
+    const groups = new Map();
+    for (const edge of this.graph.edges) {
+      const key = JSON.stringify([edge.source, edge.target].sort());
+      if (!groups.has(key)) groups.set(key, []);
+      groups.get(key).push(edge);
+      this.forceAdjacentEdges.get(edge.source)?.push(edge.id);
+      if (edge.source !== edge.target) this.forceAdjacentEdges.get(edge.target)?.push(edge.id);
+    }
+    for (const edges of groups.values()) {
+      edges.sort((a, b) => a.id.localeCompare(b.id));
+      edges.forEach((edge, index) => this.forceEdgeSlots.set(edge.id, { edge, index, offset: (index - (edges.length - 1) / 2) * FORCE_PARALLEL_SPACING,
+        radii: { source: this.forceRadii.get(edge.source), target: this.forceRadii.get(edge.target) },
+        appearance: !hasRuleText(edge) ? 'empty-rule' : edge.relation === 'specializes' ? 'specializes' : edge.relation === 'part-of' ? 'part-of'
+          : edge.sign === 1 ? 'positive' : edge.sign === -1 ? 'negative' : 'random' }));
+    }
+  }
+  // 同一帧内的缩放、悬停、选择与物理帧合并为一次绘制；无 RAF 的环境（测试）立即绘制。
+  requestRasterDraw() {
+    if (typeof globalThis.requestAnimationFrame !== 'function') { this.drawForceRaster(); return; }
+    if (this.rasterFrame) return;
+    this.rasterFrame = globalThis.requestAnimationFrame(() => { this.rasterFrame = null; this.drawForceRaster(); });
+  }
+  // 力导向视图在所有缩放级别都只用一张 Canvas（与 MemoryGraph 相同）：没有 SVG/光栅切换，也没有逐节点 DOM。
+  // 只有无法创建 2D 上下文的环境才退回 SVG。
+  syncForceRasterMode() {
+    const requested = this.layoutMode === 'force' && Boolean(this.root?.parentElement);
+    if (requested && !this.forceRasterLayer && typeof document?.createElement === 'function') {
+      const layer = document.createElement('canvas'), context = layer.getContext?.('2d');
+      if (context) {
+        layer.className = 'force-raster-layer'; layer.setAttribute('aria-hidden', 'true');
+        this.root.parentElement.insertBefore(layer, this.root);
+        this.forceRasterLayer = layer; this.forceRasterContext = context;
+        if (typeof ResizeObserver === 'function') {
+          this.forceRasterResizeObserver = new ResizeObserver(() => { if (this.forceRasterActive) this.drawForceRaster(); });
+          this.forceRasterResizeObserver.observe(this.root);
+        }
+      }
+    }
+    const enabled = Boolean(requested && this.forceRasterContext), changed = enabled !== Boolean(this.forceRasterActive);
+    this.forceRasterActive = enabled;
+    if (this.forceRasterLayer) this.forceRasterLayer.hidden = !enabled;
+    if (this.world && (changed || this.forceRasterWorld !== this.world)) {
+      this.world.setAttribute('display', enabled ? 'none' : 'inline'); this.forceRasterWorld = this.world;
+    }
+    this.root.classList?.toggle?.('force-raster-active', enabled);
+    // 退出力导向（或画布不可用）时需要完整 SVG；由下一次 draw 重建。
+    if (!enabled && changed && this.layoutMode === 'force') { this.forceVisibleNodes = new Map(); this.forceVisibleEdges = new Map(); }
+    return enabled;
+  }
+  forceFocusState() {
+    const current = this.selection;
+    const centers = new Set(current?.type === 'nodes' ? current.ids : ['node', 'linking'].includes(current?.type) ? [current.id] : []);
+    for (const id of centers) if (!this.forceAdjacentEdges.has(id)) centers.delete(id);
+    // 层数只扩大当前选择的高亮集合，完整显示图与坐标始终保留；多选以所有选中概念为起点。
+    const relatedNodes = new Set(centers), relatedEdges = new Set();
+    const limit = this.highlightDepth === null ? Infinity : this.highlightDepth ?? 1;
+    let frontier = [...centers];
+    for (let depth = 0; depth < limit && frontier.length; depth++) {
+      const next = [];
+      for (const id of frontier) for (const edgeId of this.forceAdjacentEdges.get(id) ?? []) {
+        const { edge } = this.forceEdgeSlots.get(edgeId), other = edge.source === id ? edge.target : edge.source;
+        if (!relatedNodes.has(other)) { relatedNodes.add(other); next.push(other); }
+      }
+      frontier = next;
+    }
+    if (centers.size) for (const [id, { edge }] of this.forceEdgeSlots) {
+      if (relatedNodes.has(edge.source) && relatedNodes.has(edge.target)) relatedEdges.add(id);
+    }
+    if (current?.type === 'edge' && this.forceEdgeSlots.has(current.id)) relatedEdges.add(current.id);
+    for (const id of relatedEdges) { const { edge } = this.forceEdgeSlots.get(id); relatedNodes.add(edge.source); relatedNodes.add(edge.target); }
+    return { centers, relatedNodes, relatedEdges, attention: relatedNodes.size > 0 };
+  }
+  drawForceRaster(positions = this.positions) {
+    if (!this.forceRasterActive || !this.forceRasterContext) return;
+    this.ensureForceIndex();
+    const layer = this.forceRasterLayer, context = this.forceRasterContext;
+    const width = this.root.clientWidth, height = this.root.clientHeight;
+    const dpr = Math.min(2, globalThis.devicePixelRatio || 1);
+    const pixelWidth = Math.max(1, Math.round(width * dpr)), pixelHeight = Math.max(1, Math.round(height * dpr));
+    if (layer.width !== pixelWidth) layer.width = pixelWidth;
+    if (layer.height !== pixelHeight) layer.height = pixelHeight;
+    context.setTransform(dpr, 0, 0, dpr, 0, 0); context.clearRect(0, 0, width, height);
+    const { x, y, scale } = this.camera;
+    context.translate(x, y); context.scale(scale, scale);
+    const bounds = this.forceViewportBounds();
+    const { centers, relatedNodes, relatedEdges, attention } = this.forceFocusState();
+    const current = this.selection, selected = new Set(this.selectedIds()), pixel = 1 / scale;
+    const now = performance.now();
+    if (!this.forceMotionPreference) {
+      this.forceMotionPreference = globalThis.matchMedia?.('(prefers-reduced-motion: reduce)') ?? { matches: false };
+      this.forceMotionPreference.addEventListener?.('change', () => this.requestRasterDraw());
+    }
+    const reduceMotion = this.forceMotionPreference.matches;
+    this.forceRasterEdges = []; this.forceHitIndex = null;
+    context.lineJoin = 'round'; context.lineCap = 'round';
+    // 连线：所有缩放级别统一为屏幕 1px 的中性灰；透明度随缩放对数增长（参照 MemoryGraph）。
+    // 高亮关系由粗深的源端渐变到细浅的目标端；悬停不改变节点选择，仅为该边显示流动。
+    const restAlpha = Math.max(.16, Math.min(.5, .2 + .14 * Math.log2(1 + scale)));
+    const routeCache = this.forceRasterRouteCache ??= new Map();
+    const rest = { influence: { routes: [] }, structural: { routes: [] }, empty: { routes: [] } };
+    const focusEdges = [], flowEdges = [];
+    for (const [id, slot] of this.forceEdgeSlots) {
+      const { edge, index, offset, appearance, radii } = slot, a = positions[edge.source], b = positions[edge.target];
+      if (!a || !b) continue;
+      const padding = Math.max(180, Math.hypot(b.x - a.x, b.y - a.y) * .65) + Math.abs(offset) + index * 24;
+      if (bounds && (Math.max(a.x, b.x) + WIDTH + padding < bounds.left || Math.min(a.x, b.x) - padding > bounds.right
+        || Math.max(a.y, b.y) + HEIGHT + padding < bounds.top || Math.min(a.y, b.y) - padding > bounds.bottom)) continue;
+      // 端点未移动时复用几何，缩放、平移、悬停只重绘不重算路线。
+      let cached = routeCache.get(id);
+      let route = cached && cached.ax === a.x && cached.ay === a.y && cached.bx === b.x && cached.by === b.y ? cached.route : null;
+      if (!route) { route = forceEdgeGeometry(a, b, edge.source, edge.target, offset, index, radii); cached = { ax: a.x, ay: a.y, bx: b.x, by: b.y, route }; routeCache.set(id, cached); }
+      this.routed.set(id, route); this.forceRasterEdges.push(id);
+      const active = current?.type === 'edge' && current.id === id;
+      const hovered = this.forceHoverEdgeId === id;
+      const related = relatedEdges.has(id);
+      if (related || active || hovered) {
+        const color = FORCE_RELATION_COLORS[appearance];
+        const strong = active || hovered, startWidth = strong ? 8 : 6, endWidth = strong ? 1.5 : 1.25;
+        const alpha = centers.has(edge.target) && !centers.has(edge.source) ? .6 : 1;
+        const dash = edge.relation === 'specializes' ? [6, 4] : edge.relation === 'part-of' ? [2, 4] : [];
+        const key = `${scale}|${strong}`;
+        if (cached.ribbonKey !== key) {
+          cached.ribbonKey = key;
+          cached.ribbon = forceEdgeRibbon(route, { startWidth, endWidth, scale, dash,
+            circles: [{ x: a.x + WIDTH / 2, y: a.y + HEIGHT / 2, radius: radii.source }, { x: b.x + WIDTH / 2, y: b.y + HEIGHT / 2, radius: radii.target }] });
+          if (typeof globalThis.Path2D === 'function') for (const polygon of cached.ribbon.polygons) {
+            const path = new Path2D(); path.moveTo(polygon.points[0].x, polygon.points[0].y);
+            for (let index = 1; index < polygon.points.length; index++) path.lineTo(polygon.points[index].x, polygon.points[index].y);
+            path.closePath(); polygon.path = path;
+          }
+        }
+        const item = { color, alpha, ribbon: cached.ribbon, strong };
+        focusEdges.push(item);
+        if (active || hovered) flowEdges.push(item);
+        continue;
+      }
+      const group = edge.relation === 'specializes' || edge.relation === 'part-of' ? rest.structural : appearance === 'empty-rule' ? rest.empty : rest.influence;
+      group.routes.push(route);
+    }
+    const dim = attention ? .22 : 1;
+    const restBatches = [
+      { color: FORCE_EDGE_REST, alpha: restAlpha * .55 * dim, lineWidth: pixel, dash: [5 * pixel, 4 * pixel], ...rest.structural },
+      { color: FORCE_EDGE_REST, alpha: restAlpha * .7 * dim, lineWidth: pixel, dash: [], ...rest.empty },
+      { color: FORCE_EDGE_REST, alpha: restAlpha * dim, lineWidth: pixel, dash: [], ...rest.influence },
+    ];
+    const strokeRoutes = routes => {
+      context.beginPath();
+      for (const route of routes) {
+        context.moveTo(route.start.x, route.start.y);
+        if (route.controls.length === 2) context.bezierCurveTo(route.controls[0].x, route.controls[0].y, route.controls[1].x, route.controls[1].y, route.end.x, route.end.y);
+        else if (route.controls.length) context.quadraticCurveTo(route.controls[0].x, route.controls[0].y, route.end.x, route.end.y);
+        else context.lineTo(route.end.x, route.end.y);
+      }
+      context.stroke();
+    };
+    // 同一视觉样式共用一次描边，大图每帧也只有少量原生绘制提交。
+    for (const batch of restBatches) {
+      if (!batch.routes.length) continue;
+      context.globalAlpha = batch.alpha; context.strokeStyle = batch.color; context.fillStyle = batch.color;
+      context.lineWidth = batch.lineWidth; context.setLineDash(batch.dash);
+      strokeRoutes(batch.routes);
+    }
+    context.setLineDash([]);
+    for (const item of focusEdges.sort((left, right) => Number(left.strong) - Number(right.strong))) {
+      context.globalAlpha = item.alpha;
+      for (const polygon of item.ribbon.polygons) {
+        const gradient = context.createLinearGradient(polygon.start.x, polygon.start.y, polygon.end.x, polygon.end.y);
+        gradient.addColorStop(0, item.color + Math.round((1 - .65 * polygon.from) * 255).toString(16).padStart(2, '0'));
+        gradient.addColorStop(1, item.color + Math.round((1 - .65 * polygon.to) * 255).toString(16).padStart(2, '0'));
+        context.fillStyle = gradient;
+        if (polygon.path) context.fill(polygon.path);
+        else {
+          context.beginPath(); context.moveTo(polygon.points[0].x, polygon.points[0].y);
+          for (let index = 1; index < polygon.points.length; index++) context.lineTo(polygon.points[index].x, polygon.points[index].y);
+          context.closePath(); context.fill();
+        }
+      }
+    }
+    // 光点按弧长匀速从源向目标流动；减少动态效果时只在距源 70% 处留一个点。
+    for (const item of flowEdges) {
+      context.globalAlpha = item.alpha; context.fillStyle = hexAlpha('#ffffff', .4, item.color);
+      context.beginPath();
+      for (let index = 0; index < (reduceMotion ? 1 : 3); index++) {
+        const progress = reduceMotion ? .7 : (now / 1600 + index / 3) % 1;
+        const point = forceRoutePoint(item.ribbon.samples, progress), radius = 2.5 * pixel;
+        context.moveTo(point.x + radius, point.y); context.arc(point.x, point.y, radius, 0, Math.PI * 2);
+      }
+      context.fill();
+    }
+    if (flowEdges.length && !reduceMotion && !document.hidden && typeof globalThis.requestAnimationFrame === 'function') this.requestRasterDraw();
+    context.setLineDash([]);
+    const visibleNodes = [], nodeBatches = new Map();
+    const flashing = this.forceRoleFlashUntil > now;
+    const TIER_ORDER = { normal: 0, secondary: 1, core: 2 }, halos = [];
+    // 远景时枢纽保底的屏幕半径：核心约 10px、次级约 5px，不与普通节点一起缩成看不见的点。
+    const floorPx = { normal: 0, secondary: 5, core: 10 };
+    for (const id of this.forceNodeIds) {
+      const point = positions[id];
+      if (!point) continue;
+      const tier = this.forceProfiles?.get(id)?.tier ?? 'normal';
+      const radius = Math.max(this.forceRadii.get(id) ?? FORCE_DEFAULT_RADIUS, floorPx[tier] * pixel), cx = point.x + WIDTH / 2, cy = point.y + HEIGHT / 2;
+      if (bounds && (cx + radius < bounds.left || cx - radius > bounds.right || cy + radius < bounds.top || cy - radius > bounds.bottom)) continue;
+      const focus = selected.has(id) || centers.has(id) || this.linkSource === id;
+      const related = relatedNodes.has(id);
+      const palette = forceNodePalette(this.nodeColors?.[id]);
+      // 静止时按档位区分：普通淡而细、次级更饱和、核心最饱和带外晕；聚焦概念及其邻居换成饱和色，其余整体退后。
+      const alpha = attention && !related ? .28 : 1;
+      const restFill = tier === 'core' ? palette.core : tier === 'secondary' ? palette.secondary : palette.soft;
+      const restStroke = tier === 'core' ? palette.coreStroke : tier === 'secondary' ? palette.secondaryStroke : palette.softStroke;
+      const nodeFill = focus || attention && related ? (tier === 'normal' ? palette.vivid : restFill) : restFill;
+      const stroke = focus ? '#1f4d3e' : restStroke;
+      const lineWidth = (focus ? 2 : tier === 'core' ? 1.75 : tier === 'secondary' ? 1.25 : 1) * pixel;
+      const transparent = this.nodeStyles?.[id] === 'transparent-dashed';
+      const order = (focus ? 20 : related ? 10 : 0) + TIER_ORDER[tier];
+      const key = `${alpha}|${nodeFill}|${stroke}|${lineWidth}|${transparent}|${order}`;
+      if (!nodeBatches.has(key)) nodeBatches.set(key, { alpha, fill: nodeFill, stroke, lineWidth, transparent, nodes: [], order });
+      nodeBatches.get(key).nodes.push({ cx, cy, radius });
+      if (tier === 'core' && !transparent) halos.push({ cx, cy, radius, color: palette.halo, alpha: alpha * .3 });
+      visibleNodes.push({ id, cx, cy, radius, tier, focus, related, hovered: this.forceRasterHoverId === id });
+    }
+    // 核心枢纽的同色外晕：一圈半透明宽环，远看像地图上的城市；先于圆绘制，不遮挡圆本身。
+    if (halos.length) {
+      const haloPx = 9;
+      for (const { cx, cy, radius, color, alpha } of halos) {
+        context.globalAlpha = alpha; context.fillStyle = color; context.beginPath();
+        context.arc(cx, cy, radius + haloPx * pixel, 0, Math.PI * 2); context.fill();
+      }
+      context.globalAlpha = 1;
+    }
+    // 同一视觉样式的圆合并成一条路径，一次填充一次描边；小的先画，大的后画，枢纽不被压住。
+    for (const batch of [...nodeBatches.values()].sort((left, right) => left.order - right.order)) {
+      context.globalAlpha = batch.alpha; context.fillStyle = batch.fill; context.strokeStyle = batch.stroke;
+      context.lineWidth = batch.lineWidth; context.setLineDash(batch.transparent ? [4 * pixel, 3 * pixel] : []);
+      context.beginPath();
+      for (const { cx, cy, radius } of batch.nodes) { context.moveTo(cx + radius, cy); context.arc(cx, cy, radius, 0, Math.PI * 2); }
+      if (!batch.transparent) context.fill(); context.stroke();
+    }
+    context.setLineDash([]);
+    // 光环：选中（强调色）、悬停（淡强调色）、查找结果（金色）、连线起点（正向色虚线）、起点/终点提示（闪烁）。
+    const ring = (items, color, widthPx, gapPx, alpha = .9, dash = []) => {
+      if (!items.length) return;
+      context.globalAlpha = alpha; context.strokeStyle = color; context.lineWidth = widthPx * pixel;
+      context.setLineDash(dash.map(value => value * pixel)); context.beginPath();
+      for (const { cx, cy, radius } of items) { const r = radius + gapPx * pixel; context.moveTo(cx + r, cy); context.arc(cx, cy, r, 0, Math.PI * 2); }
+      context.stroke();
+    };
+    const search = this.forceSearchIds ?? new Set();
+    ring(visibleNodes.filter(item => item.hovered && !item.focus), '#2f6b57', 1.5, 4, .45);
+    ring(visibleNodes.filter(item => search.has(item.id) && item.id !== this.forceSearchCurrent), '#b38c36', 2, 5, .95, [4, 3]);
+    ring(visibleNodes.filter(item => item.id === this.forceSearchCurrent), '#b38c36', 3, 5, 1);
+    ring(visibleNodes.filter(item => item.focus && item.id !== this.linkSource), '#2f6b57', 2, 4, .9);
+    ring(visibleNodes.filter(item => item.id === this.linkSource), '#2d8272', 2, 4, .95, [4, 3]);
+    if (flashing) {
+      const roles = this.forceRoles ?? new Map(), pulse = .35 + .65 * Math.abs(Math.sin((now - this.forceRoleFlashStart) / 750 * Math.PI));
+      ring(visibleNodes.filter(item => roles.get(item.id) === 'node-start'), '#1f8a6d', 4, 3, pulse);
+      ring(visibleNodes.filter(item => roles.get(item.id) === 'node-end'), '#d07f1c', 4, 3, pulse, [9, 5]);
+      if (typeof globalThis.requestAnimationFrame === 'function') this.requestRasterDraw();
+    }
+    context.setLineDash([]); context.globalAlpha = 1;
+    this.drawRasterLabels(context, visibleNodes, { attention, scale, dpr });
+    context.setTransform(dpr, 0, 0, dpr, 0, 0); context.translate(x, y); context.scale(scale, scale);
+    if (this.gesture?.type === 'box' && this.gesture.moved) {
+      const { point, end } = this.gesture;
+      context.fillStyle = '#2f6b571a'; context.strokeStyle = '#2f6b57'; context.lineWidth = pixel;
+      context.fillRect(Math.min(point.x, end.x), Math.min(point.y, end.y), Math.abs(end.x - point.x), Math.abs(end.y - point.y));
+      context.strokeRect(Math.min(point.x, end.x), Math.min(point.y, end.y), Math.abs(end.x - point.x), Math.abs(end.y - point.y));
+    }
+  }
+  // 标签在屏幕坐标下以固定字号绘制，不随缩放变糊。聚焦概念必显，其余按连接度优先；
+  // 避让用屏幕网格查重叠，每个名字只与附近的格子比较，不再与所有圆逐一比较。
+  drawRasterLabels(context, visibleNodes, { attention, scale, dpr }) {
+    this.forceChipHits = [];
+    if (typeof context.fillText !== 'function') return;
+    const degree = id => this.forceAdjacentEdges.get(id)?.length ?? 0;
+    const names = this.forceRasterLabels ??= new Map();
+    const labelOf = id => {
+      let text = names.get(id);
+      if (text === undefined) { text = String(this.forceNodeById.get(id)?.label ?? ''); names.set(id, text); }
+      return text;
+    };
+    const { x: cameraX, y: cameraY } = this.camera;
+    const font = this.rasterFont ??= (globalThis.getComputedStyle?.(this.root)?.fontFamily || 'system-ui, sans-serif');
+    context.setTransform(dpr, 0, 0, dpr, 0, 0);
+    context.lineJoin = 'round';
+    const CELL = 48, grid = new Map();
+    const cellsOf = box => {
+      const keys = [];
+      for (let gx = Math.floor(box[0] / CELL); gx <= Math.floor(box[2] / CELL); gx++) for (let gy = Math.floor(box[1] / CELL); gy <= Math.floor(box[3] / CELL); gy++) keys.push(gx * 73856093 ^ gy * 19349663);
+      return keys;
+    };
+    const occupy = (box, owner = null) => { const entry = [...box, owner]; for (const key of cellsOf(box)) { let list = grid.get(key); if (!list) grid.set(key, list = []); list.push(entry); } };
+    const collides = (box, owner = null) => {
+      for (const key of cellsOf(box)) for (const other of grid.get(key) ?? []) {
+        if (other[4] !== null && other[4] === owner) continue;
+        if (box[0] < other[2] && box[2] > other[0] && box[1] < other[3] && box[3] > other[1]) return true;
+      }
+      return false;
+    };
+    // 先把可见圆占位，名字不压到别的圆上（极远景圆不足一像素，省去占位）。
+    if (scale >= .12) for (const item of visibleNodes) {
+      const sx = item.cx * scale + cameraX, sy = item.cy * scale + cameraY, r = item.radius * scale;
+      occupy([sx - r, sy - r, sx + r, sy + r], item.id);
+    }
+    // 名字写在圆的正下方，像地图上的地名：放大时全部显示，缩小时按连接度挑选，聚焦的概念与邻居必显。
+    // 档位决定名字的出现时机：核心作地标几乎一直在，次级比普通晚隐藏，普通放大后才全部出现。
+    const minimumDegree = scale >= .3 ? 0 : scale >= .16 ? 2 : scale >= .08 ? 4 : Infinity;
+    const tierVisible = { core: scale >= .02, secondary: scale >= .07, normal: false };
+    const labelled = item => item.focus || item.hovered || attention && item.related
+      || !attention && (tierVisible[item.tier] || degree(item.id) >= minimumDegree);
+    if (!visibleNodes.some(labelled)) { context.globalAlpha = 1; return; }
+    const small = scale < .3;
+    const styleOf = item => item.tier === 'core'
+      ? { weight: 700, size: small ? 13 : 15, color: '#18221d' }
+      : item.tier === 'secondary'
+        ? { weight: 600, size: small ? 11.5 : 12.5, color: '#2b3631' }
+        : { weight: item.focus ? 600 : 500, size: small ? 10.5 : 11.5, color: '#56625c' };
+    context.textBaseline = 'top'; context.textAlign = 'center';
+    const tierBoost = { core: 2e4, secondary: 1e4, normal: 0 };
+    const candidates = visibleNodes.filter(labelled)
+      .map(item => ({ item, priority: (item.focus || item.hovered ? 1e6 : 0) + (attention && item.related ? 1e5 : 0) + tierBoost[item.tier] + degree(item.id) }))
+      .sort((left, right) => right.priority - left.priority);
+    const widths = this.forceLabelWidths ??= new Map();
+    const showChips = scale >= .8 && !this.definitionMode;
+    let drawn = 0;
+    for (const { item } of candidates) {
+      if (drawn >= 600) break;
+      const style = styleOf(item), fontSize = style.size;
+      context.font = `${style.weight} ${fontSize}px ${font}`;
+      let text = labelOf(item.id); if (!text) continue;
+      text = this.fitRasterText(context, text, item.tier === 'core' ? FORCE_LABEL_MAX + 40 : FORCE_LABEL_MAX); if (!text) continue;
+      const widthKey = context.font + '|' + text;
+      let width = widths.get(widthKey);
+      if (width === undefined) { width = context.measureText(text).width; if (widths.size > 8000) widths.clear(); widths.set(widthKey, width); }
+      const sx = item.cx * scale + cameraX, top = (item.cy + item.radius) * scale + cameraY + 3;
+      const box = [sx - width / 2 - 2, top - 1, sx + width / 2 + 2, top + fontSize + 2];
+      const forced = item.focus || item.hovered;
+      if (!forced && collides(box, item.id)) continue;
+      occupy(box, item.id);
+      context.globalAlpha = 1;
+      context.lineWidth = item.tier === 'core' ? 4 : 3; context.strokeStyle = 'rgba(245,246,244,.92)'; context.strokeText(text, sx, top);
+      context.fillStyle = item.focus ? '#1c2621' : attention && item.related ? '#2b3631' : style.color;
+      context.fillText(text, sx, top);
+      drawn++;
+      if (showChips) this.drawForceChips(context, item, sx, top + fontSize + 5, font, occupy, collides);
+    }
+    context.globalAlpha = 1; context.textAlign = 'left'; context.textBaseline = 'alphabetic';
+  }
+  // 结构徽标与概念标签：放大到可读时画在名字下方；带目标的徽标可点击跳到对应概念。
+  forceChipLayout(id) {
+    const cache = this.forceChipCache ??= new Map();
+    if (cache.has(id)) return cache.get(id);
+    const node = this.forceNodeById.get(id), visible = this.forceAdjacentEdges;
+    const tagLookup = this.forceTagLookup ??= new Map((this.tagDefinitions ?? []).map(tag => [tag.id.normalize('NFKC').trim().replace(/\s+/gu, ' ').toLocaleLowerCase(), tag]));
+    const badgeModel = badgeDisplayModel(node?.badges ?? [], this.structuralPresentation);
+    const nodeTags = (node?.tagIds ?? []).map(tagId => tagLookup.get(tagId.normalize('NFKC').trim().replace(/\s+/gu, ' ').toLocaleLowerCase())).filter(Boolean);
+    const layout = nodeChipLayout([
+      ...badgeModel.badges.map(badge => ({ kind: 'badge', text: badge.displayText, title: badge.accessibleText, targetId: badgeInteractionTargetId(badge, visible) })),
+      ...nodeTags.map(tag => ({ kind: 'tag', text: tag.displayName, title: '标签：' + tag.displayName, color: tag.color })),
+    ]);
+    const result = layout.chips.length || layout.more ? layout : null;
+    cache.set(id, result); return result;
+  }
+  drawForceChips(context, item, centerX, top, font, occupy, collides) {
+    const layout = this.forceChipLayout(item.id); if (!layout) return;
+    const last = layout.more ?? layout.chips.at(-1), total = last.x + last.width, left = centerX - total / 2;
+    const box = [left, top, left + total, top + CHIP_HEIGHT];
+    if (collides(box, item.id)) return;
+    context.save(); context.font = `400 ${CHIP_FONT}px ${font}`; context.textAlign = 'center'; context.textBaseline = 'middle';
+    const pill = (x, width) => {
+      const r = CHIP_HEIGHT / 2; context.beginPath();
+      context.moveTo(x + r, top); context.lineTo(x + width - r, top); context.arc(x + width - r, top + r, r, -Math.PI / 2, Math.PI / 2);
+      context.lineTo(x + r, top + CHIP_HEIGHT); context.arc(x + r, top + r, r, Math.PI / 2, Math.PI * 1.5); context.closePath();
+    };
+    for (const chip of layout.chips) {
+      const x = left + chip.x, tag = chip.kind === 'tag' && /^#[0-9a-f]{6}$/iu.test(chip.color ?? '');
+      pill(x, chip.width);
+      context.globalAlpha = 1; context.fillStyle = tag ? hexAlpha(chip.color, .16, '#ffffff') : '#f1f3f0'; context.fill();
+      context.lineWidth = 1; context.strokeStyle = tag ? hexAlpha(chip.color, .55, '#cbd5cf') : chip.targetId ? '#9cc0b0' : '#cbd3cc'; context.stroke();
+      context.fillStyle = tag ? '#1c2621' : '#46524c'; context.fillText(chip.label, x + chip.width / 2, top + CHIP_HEIGHT / 2 + .5);
+      if (chip.targetId) this.forceChipHits.push({ box: [x, top, x + chip.width, top + CHIP_HEIGHT], targetId: chip.targetId });
+    }
+    if (layout.more) {
+      const x = left + layout.more.x; pill(x, layout.more.width);
+      context.fillStyle = '#ffffff'; context.fill(); context.setLineDash([2, 2]); context.strokeStyle = '#cbd3cc'; context.stroke(); context.setLineDash([]);
+      context.fillStyle = '#6b7770'; context.fillText('+' + layout.more.count, x + layout.more.width / 2, top + CHIP_HEIGHT / 2 + .5);
+    }
+    context.restore();
+    occupy(box, item.id);
+  }
+  forceChipAt(event) {
+    if (!this.forceRasterActive || !this.forceChipHits?.length) return null;
+    const rect = this.root.getBoundingClientRect(), sx = event.clientX - rect.left, sy = event.clientY - rect.top;
+    return this.forceChipHits.find(({ box }) => sx >= box[0] && sx <= box[2] && sy >= box[1] && sy <= box[3])?.targetId ?? null;
+  }
+  fitRasterText(context, text, maxWidth) {
+    if (maxWidth < 12) return '';
+    const cache = this.forceRasterFitCache ??= new Map(), key = `${context.font}|${Math.round(maxWidth)}|${text}`;
+    if (cache.has(key)) return cache.get(key);
+    let result = text;
+    if (context.measureText(text).width > maxWidth) {
+      const characters = [...text]; let low = 0, high = characters.length;
+      while (low < high) { const mid = (low + high + 1) >> 1; if (context.measureText(characters.slice(0, mid).join('') + '…').width <= maxWidth) low = mid; else high = mid - 1; }
+      result = low ? characters.slice(0, low).join('') + '…' : '';
+    }
+    if (cache.size > 4000) cache.clear();
+    cache.set(key, result); return result;
+  }
+  // 命中索引：按世界坐标网格分桶节点圆和连线包围盒，坐标变化后在下一次命中时惰性重建。
+  // 指针移动只检查所在格子附近的候选，而不是全部节点和每条连线。
+  forceHitGrid() {
+    if (this.forceHitIndex) return this.forceHitIndex;
+    const CELL = 160, nodes = new Map(), edges = new Map(), wide = [];
+    const key = (gx, gy) => gx * 73856093 ^ gy * 19349663;
+    for (const id of this.forceNodeIds) {
+      const point = this.positions[id]; if (!point) continue;
+      const radius = this.forceRadii.get(id) ?? FORCE_DEFAULT_RADIUS, cx = point.x + WIDTH / 2, cy = point.y + HEIGHT / 2;
+      for (let gx = Math.floor((cx - radius) / CELL); gx <= Math.floor((cx + radius) / CELL); gx++) for (let gy = Math.floor((cy - radius) / CELL); gy <= Math.floor((cy + radius) / CELL); gy++) {
+        const k = key(gx, gy); let list = nodes.get(k); if (!list) nodes.set(k, list = []); list.push(id);
+      }
+    }
+    for (const id of this.forceRasterEdges ?? []) {
+      const route = this.routed.get(id); if (!route?.start) continue;
+      const points = [route.start, route.end, ...route.controls];
+      const minX = Math.min(...points.map(p => p.x)), maxX = Math.max(...points.map(p => p.x)), minY = Math.min(...points.map(p => p.y)), maxY = Math.max(...points.map(p => p.y));
+      const x0 = Math.floor(minX / CELL), x1 = Math.floor(maxX / CELL), y0 = Math.floor(minY / CELL), y1 = Math.floor(maxY / CELL);
+      if ((x1 - x0 + 1) * (y1 - y0 + 1) > 256) { wide.push(id); continue; }
+      for (let gx = x0; gx <= x1; gx++) for (let gy = y0; gy <= y1; gy++) { const k = key(gx, gy); let list = edges.get(k); if (!list) edges.set(k, list = []); list.push(id); }
+    }
+    return this.forceHitIndex = { CELL, key, nodes, edges, wide };
+  }
+  // 力导向命中按圆：先找真正落在圆内的节点（后绘制的在上），否则取容差范围内最近的圆心，细小圆在远景仍点得中。
+  forceNodeAt(point, tolerance = 0) {
+    this.ensureForceIndex();
+    let candidates = this.forceNodeIds;
+    if (this.forceRasterActive) {
+      const grid = this.forceHitGrid(), reach = Math.ceil(tolerance / grid.CELL), gx = Math.floor(point.x / grid.CELL), gy = Math.floor(point.y / grid.CELL);
+      const found = new Set();
+      for (let ox = -reach; ox <= reach; ox++) for (let oy = -reach; oy <= reach; oy++) for (const id of grid.nodes.get(grid.key(gx + ox, gy + oy)) ?? []) found.add(id);
+      if (reach > 2 || found.size > 64) candidates = this.forceNodeIds;
+      else { const order = this.forceNodeOrder ??= new Map(this.forceNodeIds.map((id, index) => [id, index])); candidates = [...found].sort((a, b) => order.get(a) - order.get(b)); }
+    }
+    let near = null, nearest = Infinity;
+    for (let index = candidates.length - 1; index >= 0; index--) {
+      const id = candidates[index], node = this.positions[id]; if (!node) continue;
+      const radius = this.forceRadii.get(id) ?? FORCE_DEFAULT_RADIUS;
+      const distance = Math.hypot(point.x - node.x - WIDTH / 2, point.y - node.y - HEIGHT / 2);
+      if (distance <= radius) return id;
+      if (distance - radius <= tolerance && distance - radius < nearest) { near = id; nearest = distance - radius; }
+    }
+    return near;
+  }
+  hitForceRaster(event, includeEdges = false) {
+    if (!this.forceRasterActive) return null;
+    const point = this.point(event), scale = this.camera.scale;
+    const id = this.forceNodeAt(point, Math.max(4, 6 / scale));
+    if (id) return { type: 'node', id };
+    if (!includeEdges) return null;
+    const tolerance = Math.min(9, 4 / scale), grid = this.forceHitGrid();
+    const gx = Math.floor(point.x / grid.CELL), gy = Math.floor(point.y / grid.CELL), reach = Math.min(2, Math.ceil(tolerance / grid.CELL));
+    const candidates = new Set(grid.wide);
+    for (let ox = -reach; ox <= reach; ox++) for (let oy = -reach; oy <= reach; oy++) for (const edgeId of grid.edges.get(grid.key(gx + ox, gy + oy)) ?? []) candidates.add(edgeId);
+    const highlighted = this.forceFocusState().relatedEdges;
+    let best = null, bestDistance = Infinity;
+    for (const edgeId of candidates) {
+      const route = this.routed.get(edgeId); if (!route?.start) continue;
+      const strong = this.selection?.type === 'edge' && this.selection.id === edgeId || this.forceHoverEdgeId === edgeId;
+      const ribbon = highlighted.has(edgeId) || strong ? this.forceRasterRouteCache.get(edgeId)?.ribbon : null;
+      const samples = ribbon?.samples.points, steps = samples ? samples.length - 1 : 10;
+      const [first, second] = route.controls; let previous = route.start;
+      for (let step = 1; step <= steps; step++) {
+        const t = step / steps, inverse = 1 - t;
+        const coordinate = key => second ? inverse ** 3 * route.start[key] + 3 * inverse ** 2 * t * first[key] + 3 * inverse * t ** 2 * second[key] + t ** 3 * route.end[key]
+          : first ? inverse ** 2 * route.start[key] + 2 * inverse * t * first[key] + t ** 2 * route.end[key] : inverse * route.start[key] + t * route.end[key];
+        const next = samples?.[step] ?? { x: coordinate('x'), y: coordinate('y') }, dx = next.x - previous.x, dy = next.y - previous.y;
+        const along = Math.max(0, Math.min(1, ((point.x - previous.x) * dx + (point.y - previous.y) * dy) / (dx * dx + dy * dy || 1)));
+        const distance = Math.hypot(point.x - previous.x - along * dx, point.y - previous.y - along * dy);
+        const progress = samples ? samples[step - 1].progress + (next.progress - samples[step - 1].progress) * along : t;
+        const halfWidth = ribbon ? ((strong ? 8 : 6) * (1 - progress) + (strong ? 1.5 : 1.25) * progress) / (2 * scale) : 0;
+        if (distance <= tolerance + halfWidth && distance < bestDistance) { best = edgeId; bestDistance = distance; }
+        previous = next;
+      }
+    }
+    return best ? { type: 'edge', id: best } : null;
+  }
+  forceViewportBounds() {
+    const width = this.root?.clientWidth, height = this.root?.clientHeight, camera = this.camera;
+    if (!(width > 0 && height > 0 && camera?.scale > 0)) return null;
+    const margin = 100 / camera.scale;
+    return { left: -camera.x / camera.scale - margin, top: -camera.y / camera.scale - margin,
+      right: (width - camera.x) / camera.scale + margin, bottom: (height - camera.y) / camera.scale + margin };
+  }
+  paintForceFrame(ids, positions, { positionsChanged = true, allEdges = false } = {}) {
+    if (this.forceRasterActive) { this.requestRasterDraw(); return; }
+    this.ensureForceIndex();
+    const bounds = this.forceViewportBounds(), edgeIds = allEdges ? this.forceEdgeSlots.keys() : new Set();
+    this.forceVisibleNodes ??= new Map(); this.forceVisibleEdges ??= new Map();
+    this.forceDirtyLabels ??= new Set();
+    const showLabels = !(this.camera?.scale < .45);
+    const updateLabel = (id, elements, geometry) => {
+      elements.label.setAttribute('x', geometry.labelX); elements.label.setAttribute('y', geometry.labelY);
+      this.forceDirtyLabels.delete(id);
+    };
+    for (const id of ids) {
+      const point = positions[id], element = this.nodeElements?.get(id);
+      if (!point) continue;
+      if (!allEdges) for (const edgeId of this.forceAdjacentEdges.get(id) ?? []) edgeIds.add(edgeId);
+      if (!element) continue;
+      const visible = !bounds || point.x + WIDTH >= bounds.left && point.x <= bounds.right && point.y + HEIGHT >= bounds.top && point.y <= bounds.bottom;
+      const previous = this.forceVisibleNodes.get(id);
+      if (previous !== visible) { element.setAttribute('display', visible ? 'inline' : 'none'); this.forceVisibleNodes.set(id, visible); }
+      if (visible && (positionsChanged || previous !== true)) element.setAttribute('transform', `translate(${point.x} ${point.y})`);
+    }
+    for (const id of edgeIds) {
+      const slot = this.forceEdgeSlots.get(id), elements = this.edgeElements?.get(id);
+      if (!slot || !elements) continue;
+      const { edge, index, offset, radii } = slot, a = positions[edge.source], b = positions[edge.target];
+      if (!a || !b) continue;
+      // 保守包围盒保留可能穿过视口的曲线，屏外连接只暂缓 DOM 更新，数据和选择仍完整。
+      const padding = Math.max(180, Math.hypot(b.x - a.x, b.y - a.y) * .65) + Math.abs(offset) + index * 24;
+      const visible = !bounds || Math.max(a.x, b.x) + WIDTH + padding >= bounds.left && Math.min(a.x, b.x) - padding <= bounds.right
+        && Math.max(a.y, b.y) + HEIGHT + padding >= bounds.top && Math.min(a.y, b.y) - padding <= bounds.bottom;
+      const previous = this.forceVisibleEdges.get(id);
+      if (previous !== visible) { elements.group?.setAttribute('display', visible ? 'inline' : 'none'); this.forceVisibleEdges.set(id, visible); }
+      if (!visible) continue;
+      if (!positionsChanged && previous === true) {
+        if (showLabels && this.forceDirtyLabels.has(id)) updateLabel(id, elements, this.routed.get(id));
+        continue;
+      }
+      const geometry = forceEdgeGeometry(a, b, edge.source, edge.target, offset, index, radii);
+      this.routed.set(id, geometry);
+      elements.hit.setAttribute('d', geometry.path); elements.line.setAttribute('d', geometry.path);
+      if (showLabels) updateLabel(id, elements, geometry); else this.forceDirtyLabels.add(id);
+    }
+  }
+  updateForcePositions(positions, frameVersion = this.forceFrameVersion) {
+    if (this.layoutMode !== 'force' || frameVersion !== this.forceFrameVersion) return false;
+    this.ensureForceIndex();
+    const changed = [];
+    for (const [id, point] of Object.entries(positions)) {
+      if (!this.forceAdjacentEdges.has(id)) continue;
+      if (!point || !Number.isFinite(point.x) || !Number.isFinite(point.y)) throw new Error(`力导向帧缺少有效节点位置：${id}`);
+      const previous = this.positions[id];
+      if (previous?.x !== point.x || previous?.y !== point.y) changed.push(id);
+    }
+    // 原地改写坐标：每帧不为每个节点分配新对象。
+    for (const id of changed) {
+      const point = this.positions[id];
+      if (point) { point.x = positions[id].x; point.y = positions[id].y; } else this.positions[id] = { x: positions[id].x, y: positions[id].y };
+    }
+    if (changed.length) { this.forceHitIndex = null; this.paintForceFrame(changed, this.positions); }
+    return true;
+  }
+  refreshForceVisibility() {
+    if (!this.nodeElements || !this.edgeElements) return;
+    this.ensureForceIndex();
+    this.paintForceFrame(this.forceNodeIds, this.positions, { positionsChanged: false, allEdges: true });
   }
   renderIncremental(ids, positions, previousPositions = this.positions) {
     if (!this.nodeElements || !this.edgeElements) return;
+    if (this.layoutMode === 'force') { this.paintForceFrame(ids, positions); return; }
     const affected = new Set(ids);
     for (const id of ids) {
       const element = this.nodeElements.get(id), point = positions[id];
@@ -2380,34 +3239,51 @@ export class GraphCanvas {
     }
     const parallel = new Map();
     for (const edge of this.graph.edges) {
-      const key = [edge.source, edge.target].sort().join('/');
+      const key = JSON.stringify([edge.source, edge.target].sort());
       if (!parallel.has(key)) parallel.set(key, []); parallel.get(key).push(edge.id);
     }
-    for (const members of parallel.values()) members.sort();
+    for (const members of parallel.values()) members.sort(this.layoutMode === 'force' ? (a, b) => a.localeCompare(b) : undefined);
     for (const edge of this.graph.edges) {
       if (!affected.has(edge.source) && !affected.has(edge.target)) continue;
       const elements = this.edgeElements.get(edge.id); if (!elements) continue;
-      const siblings = parallel.get([edge.source, edge.target].sort().join('/'));
-      const offset = (siblings.indexOf(edge.id) - (siblings.length - 1) / 2) * 34;
-      const geometry = incrementalEdgeGeometry(edge, positions, previousPositions, this.routed.get(edge.id), offset);
+      const siblings = parallel.get(JSON.stringify([edge.source, edge.target].sort()));
+      const index = siblings.indexOf(edge.id), offset = (index - (siblings.length - 1) / 2) * (this.layoutMode === 'force' ? 48 : 34);
+      const geometry = this.layoutMode === 'force'
+        ? forceEdgeGeometry(positions[edge.source], positions[edge.target], edge.source, edge.target, offset, index)
+        : incrementalEdgeGeometry(edge, positions, previousPositions, this.routed.get(edge.id), offset);
       elements.hit.setAttribute('d', geometry.path); elements.line.setAttribute('d', geometry.path);
       elements.label.setAttribute('x', geometry.labelX); elements.label.setAttribute('y', geometry.labelY);
     }
   }
   draw({ reroute = false } = {}) {
     this.root.replaceChildren();
+    this.selectionBox = null;
+    this.forceDirtyLabels = new Set();
     const defs = svg('defs');
     for (const [id, fill] of [['positive', '#328577'], ['negative', '#bd7064'], ['random', '#8b6fb3'], ['specializes', '#c49a26'], ['part-of', '#4f7f9a'], ['empty-rule', '#9a9fa6']]) {
       const marker = svg('marker', { id, markerWidth: 7, markerHeight: 7, refX: 6, refY: 3.5, orient: 'auto-start-reverse', markerUnits: 'strokeWidth' });
       marker.append(svg('path', { d: 'M0,0 L7,3.5 L0,7 Z', fill })); defs.append(marker);
     }
     this.world = svg('g'); this.root.append(defs, this.world);
+    // 力导向视图由单张 Canvas 绘制：不创建逐节点、逐连线的 SVG 元素，帧更新只改数据并请求一次重绘。
+    if (this.layoutMode === 'force') {
+      this.ensureForceIndex();
+      this.forceTooltipCache = new Map(); this.forceChipCache = new Map(); this.forceTagLookup = null; this.forceHitIndex = null;
+      if (this.syncForceRasterMode()) {
+        this.nodeElements = new Map(); this.edgeElements = new Map();
+        this.forceVisibleNodes = new Map(); this.forceVisibleEdges = new Map();
+        this.transform(); return;
+      }
+    }
     const positions = { ...this.positions };
     if (this.gesture?.type === 'nodes' && this.gesture.next) Object.assign(positions, this.gesture.next);
-    const routed = this.routed;
+    const routed = this.layoutMode === 'force' && this.gesture?.type === 'nodes' && this.gesture.next
+      ? forceGraphRoutes(this.graph, positions) : this.routed;
     this.nodeElements = new Map(); this.edgeElements = new Map();
     // update 已经把唯一的显示投影交给 this.graph：draw 只渲染，不再自行解释关系。
     const projection = this.graph;
+    const selectedIds = new Set(this.selectedIds()), names = new Map(projection.nodes.filter(node => typeof node.label === 'string').map(node => [node.id, node.label]));
+    const name = id => { if (!names.has(id)) names.set(id, this.callbacks.name(id)); return names.get(id); };
     const parallel = new Map();
     for (const edge of projection.edges) {
       const key = [edge.source, edge.target].sort().join('/');
@@ -2416,12 +3292,14 @@ export class GraphCanvas {
     for (const ids of parallel.values()) ids.sort();
     for (const edge of projection.edges) {
       // 松手后的旧线不能充当新坐标下的正式路线；失败时继续隐藏并显示错误。
-      if (this.unsettledRouteIds?.has(edge.id)) continue;
+      if (this.layoutMode !== 'force' && this.unsettledRouteIds?.has(edge.id)) continue;
       const a = positions[edge.source], b = positions[edge.target]; if (!a || !b) continue;
       const siblings = parallel.get([edge.source, edge.target].sort().join('/'));
       const offset = (siblings.indexOf(edge.id) - (siblings.length - 1) / 2) * 34;
-      let geometry = edge.source === edge.target ? edgeGeometry(a, b, edge.source, edge.target, offset) : routed.get(edge.id);
+      let geometry = this.layoutMode === 'force' ? routed.get(edge.id)
+        : edge.source === edge.target ? edgeGeometry(a, b, edge.source, edge.target, offset) : routed.get(edge.id);
       if (!geometry) {
+        if (this.layoutMode === 'force') throw new Error(`力导向连线缺少当前几何：${edge.id}`);
         // 初次打开没有缓存时，宁可暂不显示边，也不能先画一套临时折线再跳成
         // 严格路线。其它编辑态仍保留即时折线反馈。
         if (this.hideUnroutedEdges) continue;
@@ -2433,10 +3311,10 @@ export class GraphCanvas {
       const appearance = hasRuleText(edge) ? sign : 'empty-rule';
       const selected = this.selection?.type === 'edge' && this.selection.id === edge.id;
       const relationName = sign === 'specializes' ? '特化 / 是某种' : sign === 'part-of' ? '组成 / 是其一部分' : sign === 'positive' ? '正向影响' : sign === 'negative' ? '负向影响' : '随机影响';
-      const qualifierText = (qualifiers, side) => (qualifiers?.length ? `；${side}限定：${qualifiers.map(item => `${item.key}=${item.value.kind === 'concept' ? this.callbacks.name(item.value.conceptId) : String(item.value.value)}`).join('，')}` : '');
-      const group = svg('g', { 'data-edge': edge.id, tabindex: 0, role: 'button', 'aria-label': `${this.callbacks.name(edge.source)}${qualifierText(edge.sourceQualifiers, '源')} ${relationName} ${this.callbacks.name(edge.target)}${qualifierText(edge.targetQualifiers, '目标')}` });
+      const qualifierText = (qualifiers, side) => (qualifiers?.length ? `；${side}限定：${qualifiers.map(item => `${item.key}=${item.value.kind === 'concept' ? name(item.value.conceptId) : String(item.value.value)}`).join('，')}` : '');
+      const group = svg('g', { 'data-edge': edge.id, tabindex: 0, role: 'button', 'aria-label': `${name(edge.source)}${qualifierText(edge.sourceQualifiers, '源')} ${relationName} ${name(edge.target)}${qualifierText(edge.targetQualifiers, '目标')}` });
       const rules = edge.steps?.length ? edge.steps : [edge];
-      const tooltipText = edgeHoverDetail({ ...edge, ruleText: rules.map(rule => rule.ruleText).filter(text => text?.trim()).join('\n\n') }, this.callbacks.name, { includeRelation: Boolean(this.includeRelationInHover) });
+      const tooltipText = edgeHoverDetail({ ...edge, ruleText: rules.map(rule => rule.ruleText).filter(text => text?.trim()).join('\n\n') }, name, { includeRelation: Boolean(this.includeRelationInHover) });
       if (tooltipText) group.setAttribute('data-tooltip', tooltipText);
       const hit = svg('path', { d: path, class: 'edge-hit' });
       const line = svg('path', { d: path, class: `edge-line edge-${appearance} ${selected ? 'selected' : ''}`, 'marker-end': `url(#${appearance})`, ...(edge.relation !== 'influence' ? { 'stroke-dasharray': edge.relation === 'part-of' ? '2 4' : '6 4' } : {}), 'pointer-events': 'none' });
@@ -2446,12 +3324,13 @@ export class GraphCanvas {
       label.textContent = sign === 'specializes' ? 'is-a' : sign === 'part-of' ? 'part-of' : edge.sign === 1 ? '＋' : edge.sign === -1 ? '−' : '？'; group.append(label); this.world.append(group);
       this.edgeElements.set(edge.id, { group, hit, line, label });
     }
-    const roles = this.nodeRoles();
+    const roles = this.nodeRoles(), force = this.layoutMode === 'force';
+    if (force) this.ensureForceIndex();
     const tagLookup = new Map((this.tagDefinitions ?? []).map(tag => [tag.id.normalize('NFKC').trim().replace(/\s+/gu, ' ').toLocaleLowerCase(), tag]));
     const visibleNodeIds = new Set(projection.nodes.map(item => item.id));
     for (const node of projection.nodes) {
       const point = positions[node.id];
-      const selected = this.selectedIds().includes(node.id);
+      const selected = selectedIds.has(node.id);
       const role = roles.get(node.id) ?? '';
       const roleLabel = role === 'node-start' ? '，起点' : role === 'node-end' ? '，终点' : '';
       const nodeColor = this.nodeColors?.[node.id];
@@ -2468,16 +3347,29 @@ export class GraphCanvas {
         ...nodeTags.map(tag => ({ kind: 'tag', text: tag.displayName, title: '标签：' + tag.displayName, color: tag.color })),
       ]);
       const hasSecondRow = this.definitionMode || chipLayout.chips.length > 0 || chipLayout.more !== null;
-      const label = svg('text', { x: NODE_TEXT_X, y: hasSecondRow ? 25 : 36 }); label.textContent = fitText(node.label, WIDTH - NODE_TEXT_X * 2, NODE_LABEL_FONT);
-      group.append(svg('rect', { width: WIDTH, height: HEIGHT, rx: 7 }), label);
+      let chipTop = HEIGHT - CHIP_HEIGHT - 9, chipLeft = NODE_TEXT_X;
+      if (force) {
+        // 力导向节点是按连接数缩放的圆，名字和胶囊挂在圆下方；坐标仍是锚定框左上角，圆心固定在框中心。
+        const radius = this.forceRadii?.get(node.id) ?? FORCE_DEFAULT_RADIUS, cx = WIDTH / 2, cy = HEIGHT / 2;
+        const palette = forceNodePalette(nodeColor);
+        group.style?.setProperty?.('--node-fill', palette.fill); group.style?.setProperty?.('--node-stroke', palette.stroke); group.style?.setProperty?.('--node-vivid', palette.vivid);
+        const label = svg('text', { x: cx, y: cy + radius + 15, 'text-anchor': 'middle', class: 'node-name' });
+        label.textContent = fitText(node.label, FORCE_LABEL_MAX + 30, FORCE_LABEL_FONT);
+        group.append(svg('circle', { cx, cy, r: radius + 6, class: 'node-halo' }), svg('circle', { cx, cy, r: radius, class: 'node-dot' }), label);
+        chipTop = cy + radius + 22;
+        const last = chipLayout.more ?? chipLayout.chips.at(-1);
+        chipLeft = last ? (WIDTH - (last.x + last.width)) / 2 : 0;
+      } else {
+        const label = svg('text', { x: NODE_TEXT_X, y: hasSecondRow ? 25 : 36 }); label.textContent = fitText(node.label, WIDTH - NODE_TEXT_X * 2, NODE_LABEL_FONT);
+        group.append(svg('rect', { width: WIDTH, height: HEIGHT, rx: 7 }), label);
+      }
       if (this.definitionMode) {
         const meta = svg('text', { x: NODE_TEXT_X, y: 45, class: 'node-meta' }); meta.textContent = node.id.slice(0, 23); group.append(meta);
       }
-      const chipTop = HEIGHT - CHIP_HEIGHT - 9;
       const appendChip = (chip, className, text, titleText) => {
         const chipGroup = svg('g', { class: `node-chip ${className}`, 'aria-label': titleText });
-        const background = svg('path', { d: pillPath(NODE_TEXT_X + chip.x, chipTop, chip.width, CHIP_HEIGHT), class: 'node-chip-shape' });
-        const chipText = svg('text', { x: NODE_TEXT_X + chip.x + chip.width / 2, y: chipTop + 11.5, 'text-anchor': 'middle', class: 'node-chip-text' }); chipText.textContent = text;
+        const background = svg('path', { d: pillPath(chipLeft + chip.x, chipTop, chip.width, CHIP_HEIGHT), class: 'node-chip-shape' });
+        const chipText = svg('text', { x: chipLeft + chip.x + chip.width / 2, y: chipTop + 11.5, 'text-anchor': 'middle', class: 'node-chip-text' }); chipText.textContent = text;
         const title = svg('title'); title.textContent = titleText;
         chipGroup.append(title, background, chipText); group.append(chipGroup);
         return { chipGroup, background };
@@ -2497,11 +3389,9 @@ export class GraphCanvas {
       if (chipLayout.more) appendChip(chipLayout.more, 'node-chip-more', '+' + chipLayout.more.count, chipLayout.more.text);
       this.world.append(group); this.nodeElements.set(node.id, group);
     }
-    if (this.gesture?.type === 'box' && this.gesture.moved) {
-      const { point, end } = this.gesture;
-      this.world.append(svg('rect', { x: Math.min(point.x, end.x), y: Math.min(point.y, end.y),
-        width: Math.abs(end.x - point.x), height: Math.abs(end.y - point.y), class: 'selection-box', 'pointer-events': 'none' }));
-    }
-    this.transform();
+    this.renderSelectionBox();
+    this.forceVisibleNodes = new Map([...this.nodeElements.keys()].map(id => [id, true]));
+    this.forceVisibleEdges = new Map([...this.edgeElements.keys()].map(id => [id, true]));
+    this.applyAttention(); this.transform();
   }
 }
