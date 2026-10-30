@@ -38,7 +38,7 @@ test('空规则判定覆盖影响关系的缺省、空串、空白与摘要缺�
   assert.equal(hasRuleText({ steps: [{ ruleText: '第一步' }, { ruleText: '第二步' }] }), true);
 });
 
-test('实际 SVG 绘制让空规则线条、箭头、符号灰显，选中与重绘不恢复关系色', t => {
+test('实际 SVG 绘制让空规则线条和箭头灰显，不显示关系符号且保留提示', t => {
   const originalDocument = globalThis.document;
   t.after(() => { globalThis.document = originalDocument; });
   const element = tag => ({ tag, attrs: {}, children: [], setAttribute(key, value) { this.attrs[key] = value; },
@@ -54,14 +54,13 @@ test('实际 SVG 绘制让空规则线条、箭头、符号灰显，选中与重
     for (const [text, expected] of [[undefined, 'empty-rule'], ['', 'empty-rule'], ['填写规则', 'negative'], ['命中时：\n降低血量 <规则> & 约束', 'negative'], [' \n', 'empty-rule']]) {
       canvas.graph.edges[0].steps[0].ruleText = text;
       canvas.draw();
-      const { group, line, label } = canvas.edgeElements.get('edge');
+      const { group, line } = canvas.edgeElements.get('edge');
       assert.equal(group.children.find(item => item.tag === 'title'), undefined);
       if (text?.trim()) assert.equal(group.attrs['data-tooltip'], text);
       else assert.equal(group.attrs['data-tooltip'], undefined);
       assert.match(line.attrs.class, new RegExp('edge-' + expected));
       assert.equal(line.attrs['marker-end'], 'url(#' + expected + ')');
-      assert.equal(label.attrs.class, 'edge-label ' + expected);
-      assert.equal(label.textContent, '−');
+      assert.equal(group.children.some(item => item.tag === 'text'), false, '正交线上不显示关系符号');
       const marker = canvas.root.children[0].children.find(item => item.attrs.id === 'empty-rule');
       assert.equal(marker.children[0].attrs.fill, '#9a9fa6');
     }

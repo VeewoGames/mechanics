@@ -35,7 +35,7 @@ function harness(t, graph = { nodes: ['a', 'b', 'c'].map(id => ({ id, label: id 
     setPointerCapture() {}, hasPointerCapture: () => true, releasePointerCapture() {} });
   if (raster) root.parentElement = { children: [], insertBefore(layer) { this.children.push(layer); } };
   const canvas = Object.create(GraphCanvas.prototype);
-  Object.assign(canvas, { root, graph: { nodes: [], edges: [] }, positions: {}, mode: 'select', camera: { x: 0, y: 0, scale: 1 },
+  Object.assign(canvas, { root, graph: { nodes: [], edges: [] }, positions: {}, mode: 'select', tooltipsEnabled: true, camera: { x: 0, y: 0, scale: 1 },
     callbacks: { name: () => { throw new Error('完整节点标签不应逐边回退到应用 find'); }, zoom() {},
       canMove: () => true, select: value => canvas.updateSelection(value), snapEnabled: () => true,
       move: value => calls.push(['move', structuredClone(value)]),
@@ -156,6 +156,52 @@ test('悬停连线只强化该边并显示三个光点，不改变节点选择�
     assert.equal(canvas.forceRasterRouteCache.get('ab').ribbon.startWidth, 8);
     assert.equal(paints.filter(paint => paint.name === 'arc' && paint.args[2] === 2.5).length, 3);
   }
+});
+
+test('关闭悬浮说明后连线没有悬停效果，临时开启和释放立即恢复对应状态', t => {
+  const { canvas, paints, event } = harness(t, undefined, undefined, { raster: true });
+  canvas.tooltip = { hidden: true, style: {}, offsetWidth: 100, offsetHeight: 30 };
+  const pointer = event(233, 31, null);
+  for (const selection of [null, { type: 'node', id: 'a' }]) {
+    canvas.clearRasterHover(true); canvas.updateSelection(selection); canvas.setTooltipsEnabled(false);
+    paints.length = 0; canvas.drawForceRaster();
+    const baseline = JSON.stringify(paints);
+    canvas.moveRasterHover(pointer); paints.length = 0; canvas.drawForceRaster();
+    assert.equal(JSON.stringify(paints), baseline, '经过连线不改变任何绘制样式');
+    assert.equal(canvas.forceHoverEdgeId, null);
+    assert.equal(canvas.root.classList.contains('force-hover'), false);
+    assert.equal(canvas.tooltip.hidden, true);
+    assert.deepEqual(canvas.hitForceRaster(pointer, true), { type: 'edge', id: 'ab' }, '仍可命中连线进行选择');
+    paints.length = 0; canvas.setTooltipsEnabled(true);
+    assert.equal(canvas.forceHoverEdgeId, 'ab', '按住 Shift 时无需再次移动指针');
+    assert.equal(canvas.tooltip.hidden, false);
+    assert.equal(canvas.root.classList.contains('force-hover'), true);
+    assert.equal(canvas.forceRasterRouteCache.get('ab').ribbon.startWidth, 8);
+    assert.equal(paints.filter(paint => paint.name === 'arc' && paint.args[2] === 2.5).length, 3);
+    paints.length = 0; canvas.setTooltipsEnabled(false);
+    assert.equal(canvas.forceHoverEdgeId, null, '松开 Shift 或关闭说明立即清除悬停');
+    assert.equal(canvas.root.classList.contains('force-hover'), false);
+    assert.equal(canvas.tooltip.hidden, true);
+    assert.equal(paints.some(paint => paint.name === 'arc' && paint.args[2] === 2.5), false);
+    assert.deepEqual(canvas.selection, selection);
+  }
+  canvas.updateSelection({ type: 'edge', id: 'ab' }); paints.length = 0; canvas.drawForceRaster();
+  assert.equal(canvas.forceRasterRouteCache.get('ab').ribbon.startWidth, 8, '关闭说明仍保留点击选中的高亮');
+  assert.equal(paints.filter(paint => paint.name === 'arc' && paint.args[2] === 2.5).length, 3);
+  canvas.updateSelection(null); canvas.moveRasterHover(event(83, 31, null));
+  assert.equal(canvas.forceRasterHoverId, 'a', '节点交互不受连线悬停开关影响');
+});
+
+test('临时开启说明使用指针当前位置，不恢复上一条连线的悬停', t => {
+  const { canvas, event } = harness(t, undefined, undefined, { raster: true });
+  canvas.tooltip = { hidden: true, style: {}, offsetWidth: 100, offsetHeight: 30 };
+  canvas.setTooltipsEnabled(false);
+  canvas.moveRasterHover(event(233, 31, null)); canvas.moveRasterHover(event(533, 31, null));
+  canvas.setTooltipsEnabled(true);
+  assert.equal(canvas.forceHoverEdgeId, 'bc'); assert.equal(canvas.tooltip.textContent, '减少');
+  canvas.setTooltipsEnabled(false); canvas.moveRasterHover(event(233, 31, null));
+  canvas.clearRasterHover(true); canvas.setTooltipsEnabled(true);
+  assert.equal(canvas.forceHoverEdgeId, null, '离开画布后不会恢复旧位置的悬停');
 });
 
 test('移除力导向关系符号及箭头，节点名字保留，入边透明度为出边的六成', t => {
@@ -468,15 +514,16 @@ test('选中、连线源和框选只刷新交互状态，不重建图或改变�
   assert.equal(canvas.forceFrameVersion, version);
 });
 
-test('低倍率帧不写隐藏关系标签，放大后恢复最新标签位置', t => {
+test('关系符号在全部倍率均不创建，帧更新仍保留节点与连线几何', t => {
   const { canvas, writes } = harness(t);
   canvas.camera.scale = .2; canvas.transform(); writes.length = 0;
   canvas.updateForcePositions({ b: { x: 350, y: 120 } });
-  assert.equal(writes.some(write => write.element === canvas.edgeElements.get('ab').label), false);
+  assert.equal(canvas.edgeElements.get('ab').label, undefined);
+  assert.equal(writes.some(write => write.element.tag === 'text'), false);
   assert.equal(canvas.root.classList.contains('force-minimal'), true);
   canvas.camera.scale = 1; canvas.transform();
-  assert.equal(canvas.edgeElements.get('ab').label.attrs.x, canvas.routed.get('ab').labelX);
-  assert.equal(canvas.edgeElements.get('ab').label.attrs.y, canvas.routed.get('ab').labelY);
+  assert.equal(canvas.edgeElements.get('ab').group.children.some(child => child.tag === 'text'), false);
+  assert.deepEqual(canvas.positions.b, { x: 350, y: 120 });
   assert.equal(canvas.root.classList.contains('force-minimal'), false);
 });
 

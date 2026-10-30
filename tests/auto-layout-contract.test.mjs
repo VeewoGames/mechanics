@@ -54,8 +54,9 @@ test('自动排版与路由缓存只消费显示投影：隐藏的 is-a 父概�
 function harness() {
   const calls = { commits: [], saves: [], fits: 0, engines: [], errors: [] };
   const context = vm.createContext({
-    graph, arranging: false, forceSession: null, forceLayouts: new Map(), saveFailure: { blocked: false },
-    busy: () => false, definitionMode: () => false, overviewMode: () => false, forceMode: () => true, dirty: () => true, contextKey: () => 'mechanic/a',
+    graph, arranging: false, forceSession: null, forceLayouts: new Map(), forceHistory: new WeakMap(), history: [], future: [],
+    draft: { positions: structuredClone(positions) }, saveFailure: { blocked: false },
+    busy: () => false, definitionMode: () => false, docsMode: () => false, overviewMode: () => false, forceMode: () => true, dirty: () => true, contextKey: () => 'mechanic/a',
     projection: () => positions, displayGraphOf: () => graph, forceTopologyKey: value => JSON.stringify(value),
     clone: structuredClone, json: JSON.stringify, isEndpointProjection: () => false,
     createForceSimulation: callbacks => {
@@ -88,7 +89,7 @@ test('自动布局模拟启动失败时不提交几何，也不触发草稿自�
   assert.equal(context.arranging, false);
 });
 
-test('机制自动整理只把选中范围交给持续模拟，收敛后释放 arranging 再非阻塞保存', async () => {
+test('机制力导向整理只把选中范围交给模拟，收敛后记录会话撤销且不自动保存', async () => {
   const { context, calls, run, engine } = harness();
   const arranged = run('autoLayout({ fitView: true })');
   assert.equal(context.arranging, true);
@@ -101,9 +102,10 @@ test('机制自动整理只把选中范围交给持续模拟，收敛后释放 a
   engine().settle();
   assert.equal(await arranged, true);
   await new Promise(resolve => setImmediate(resolve));
-  assert.equal(calls.commits.length, 1);
-  assert.deepEqual(calls.commits[0].draft.positions, next);
+  assert.equal(calls.commits.length, 0);
+  assert.equal(context.history.length, 1);
+  assert.deepEqual(structuredClone(context.draft.positions), positions);
   assert.equal(context.arranging, false);
   assert.equal(calls.fits, 1);
-  assert.deepEqual(calls.saves, [{ options: { blocking: false }, arranging: false }]);
+  assert.deepEqual(calls.saves, []);
 });

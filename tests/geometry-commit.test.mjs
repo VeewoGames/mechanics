@@ -43,32 +43,30 @@ function harness() {
     render: async () => { context.canvas.positions = context.projection(); return true; }, updateStatus() {}, showError: error => errors.push(error),
     saveDraft: async () => saved.push(structuredClone(context.draft)),
   });
-  context.dirty = () => Boolean(context.forceSession?.editRequested || JSON.stringify(context.draft) !== JSON.stringify(context.baseline));
+  context.dirty = () => JSON.stringify(context.draft) !== JSON.stringify(context.baseline);
   context.projection = () => structuredClone(context.forceLayouts.get('mechanic')?.positions ?? runtimePositions);
   vm.runInContext(functions, context);
   return { context, initialDraft, saved, errors, run: code => vm.runInContext(code, context), engine: () => engines.at(-1),
     runtime: () => structuredClone(context.forceLayouts.get('mechanic')?.positions) };
 }
 
-test('机制模拟收敛分开保存普通与限定端点坐标，撤销重做恢复同一次完整编辑', async () => {
+test('力导向收敛与撤销重做只更新会话，普通和限定位置及旧路线缓存保持原样', async () => {
   const { context, initialDraft, saved, run, runtime, engine } = harness();
   const arranged = run('arrangeForceGraph()');
   engine().tick(finalPositions);
   assert.deepEqual(structuredClone(context.draft), initialDraft, '中间帧不触碰草稿或旧路由缓存');
   assert.equal(context.history.length, 0);
   engine().settle(); await arranged;
-  assert.deepEqual(structuredClone(context.draft.positions), { ...originalPositions, a: finalPositions.a });
-  assert.deepEqual(structuredClone(context.draft.projectionPositions), { 'scoped-a': finalPositions['scoped-a'] });
-  assert.equal(context.draft.routeCache, undefined);
-  assert.equal(context.history.length, 1); assert.equal(saved.length, 1);
+  assert.deepEqual(structuredClone(context.draft), initialDraft);
+  assert.equal(context.history.length, 1); assert.equal(saved.length, 0);
   assert.deepEqual(runtime(), finalPositions);
   run('undo()');
   assert.deepEqual(structuredClone(context.draft), initialDraft);
   assert.deepEqual(runtime(), runtimePositions);
   run('undo(true)');
-  assert.deepEqual(structuredClone(context.draft), saved[0]);
+  assert.deepEqual(structuredClone(context.draft), initialDraft);
   assert.deepEqual(runtime(), finalPositions);
-  assert.equal(saved.length, 1, '撤销重做只更新草稿，不隐式保存');
+  assert.equal(saved.length, 0, '撤销重做只更新会话，不隐式保存');
 });
 
 test('首次渐进布局立即返回，仅更新运行态，不清理旧缓存、不新增历史或保存', () => {

@@ -1,6 +1,7 @@
 import { compose, tracePaths, summarizePaths, diagnose, downstreamNodes, isStructuralRelation, setStructuralParent } from '/domain/graph.mjs';
-import { GraphCanvas } from '/canvas.mjs';
-import { GraphComputeCoordinator } from '/graph-compute.mjs';
+import { GraphCanvas, graphGeometryKey } from '/canvas.mjs';
+import { createRouteCache, restoreRouteCache } from '/route-cache.mjs';
+import { GraphComputeCoordinator, computeCancelled } from '/graph-compute.mjs';
 import { GlossaryTable, ConceptEditor, ConceptPicker, ConceptReferencePicker, conceptPayloadFromForm, prepareReference, ReferenceCommit, prepareConceptUpdate, conceptStructurePresentation, structuralParentCandidates, PARENT_RELATION_OPTIONS, parentRelationLabel, nextPinnedRuleIds, qualifierFormRowFromCanonical, qualifierRowForKind, qualifierValueControlModel, qualifierValueFromForm } from '/glossary.mjs';
 import { readOpening, graphPositions, hasOnlyPositionChanges } from '/mechanic-files.mjs';
 import { assertSemanticId, semanticRuleId } from '/domain/identity.mjs';
@@ -60,7 +61,6 @@ let computeState = null, geometryEpoch = 0;
 const cameras = new Map();
 const implicitPositions = new Map();
 const overviewStates = new Map(), forceLayouts = new Map(), forceHistory = new WeakMap();
-const graphHighlightDepths = new Map();
 let forceSession = null;
 let graphReturnScreen = 'overview';
 const projectKey = () => workspace?.projectRoot?.toLowerCase() ?? '';
@@ -92,6 +92,13 @@ const uiPreference = (key, fallback) => {
 const saveUiPreference = (key, value) => { try { localStorage.setItem(key, String(value)); } catch {} };
 const persistTabState = () => persistRecentState();
 let inspectorCollapsed = uiPreference('mechanics:inspector-collapsed', false);
+let preferredGraphMode = uiPreference('mechanics:orthogonal-graph-mode', false) ? 'orthogonal' : 'force';
+let preferredHighlightDepth = (() => {
+  try {
+    const value = localStorage.getItem('mechanics:graph-highlight-depth');
+    return value === 'all' ? null : ['1', '2', '3'].includes(value) ? Number(value) : 1;
+  } catch { return 1; }
+})();
 let hoverTooltipsEnabled = uiPreference('mechanics:hover-tooltips-enabled', true);
 let hoverTooltipsTemporarilyEnabled = false;
 let referencesCollapsed = uiPreference('mechanics:references-collapsed', false);
@@ -102,11 +109,21 @@ const sidebarState = {
 };
 let recentStateWrite = Promise.resolve();
 const busy = () => opening || pending > 0;
-const dirty = () => !overviewMode() && draft && (forceSession?.editRequested || json(draft) !== json(baseline));
+const dirty = () => !overviewMode() && draft && json(draft) !== json(baseline);
 const definitionMode = () => screen === 'concepts';
 const docsMode = () => screen === 'docs';
 const overviewMode = () => screen === 'overview';
-const forceMode = () => overviewMode() || screen === 'mechanic' && activeId !== null;
+const graphMode = () => preferredGraphMode;
+const forceMode = () => overviewMode() || screen === 'mechanic' && activeId !== null && graphMode() === 'force';
+async function changeGraphMode(mode) {
+  if (overviewMode() || screen !== 'mechanic' || activeId === null || busy() || saveFailure.blocked) return;
+  if (!['force', 'orthogonal'].includes(mode)) throw new Error('未知的机制图模式：' + mode);
+  if (graphMode() === mode) return;
+  finishForceSession(); canvas.cancel(); compute.cancel(); geometryEpoch++;
+  preferredGraphMode = mode;
+  saveUiPreference('mechanics:orthogonal-graph-mode', mode === 'orthogonal');
+  await render(); canvas.fit();
+}
 // 画布、布局与路由的唯一显示投影：隐藏的 is-a 父概念既不渲染，也不参与排版或路线。
 // 任何绕过它的调用都会让画布与几何各自引用不同的图。
 const currentTaxonomyPresentation = () => overviewMode() ? overviewState().taxonomyPresentation : draft?.taxonomyPresentation;
@@ -116,7 +133,7 @@ const displayOptions = () => ({
   retainedNodeIds: overviewMode() ? overviewRetainedNodeIds(workspace, overviewState()) : draft?.focusNodeIds ?? [],
 });
 const displayGraphOf = (source = graph) => projectDisplayGraph(source, displayOptions());
-const graphHighlightDepth = () => graphHighlightDepths.has(contextKey()) ? graphHighlightDepths.get(contextKey()) : 1;
+const graphHighlightDepth = () => preferredHighlightDepth;
 function updateGraphFocusControls() {
   const enabled = forceMode() && (selection?.type === 'node' || selection?.type === 'nodes' && selection.ids.length > 0) && !busy();
   const selectedDepth = graphHighlightDepth();
@@ -130,7 +147,8 @@ function updateGraphFocusControls() {
 async function changeGraphDepth(depth) {
   if (!forceMode() || busy() || !['node', 'nodes'].includes(selection?.type)) return;
   if (depth !== null && ![1, 2, 3].includes(depth)) throw new Error('高亮层数只能为 1、2、3 或全部');
-  graphHighlightDepths.set(contextKey(), depth);
+  preferredHighlightDepth = depth;
+  saveUiPreference('mechanics:graph-highlight-depth', depth === null ? 'all' : depth);
   canvas.setHighlightDepth(depth); updateGraphFocusControls();
 }
 // 隐藏的节点或连线不能继续被选中：选择只对当前显示投影里的元素有意义。
@@ -436,6 +454,13 @@ function updateStatus() {
   $('table-view').classList.toggle('active', table); $('graph-view').classList.toggle('active', !table && !docs && !overviewMode()); $('docs-view').classList.toggle('active', docs);
   $('table-view').setAttribute('aria-pressed', String(table)); $('graph-view').setAttribute('aria-pressed', String(!table && !docs && !overviewMode())); $('docs-view').setAttribute('aria-pressed', String(docs));
   $('save').disabled = !dirty() || busy() || saveFailure.blocked;
+  $('graph-mode-controls').hidden = overviewMode() || definitionMode() || docsMode() || activeId === null;
+  $('graph-mode-controls').dataset.mode = graphMode();
+  for (const mode of ['force', 'orthogonal']) {
+    const control = $('graph-mode-' + mode);
+    control.setAttribute('aria-pressed', String(graphMode() === mode));
+    control.disabled = busy() || saveFailure.blocked;
+  }
   $('dirty-dot').hidden = !dirty();
   $('undo').disabled = overviewMode() || !history.length || busy() || !!saveFailure?.blocked;
   $('redo').disabled = overviewMode() || !future.length || busy() || !!saveFailure?.blocked;
@@ -531,10 +556,10 @@ function undo(redo = false) {
   const from = redo ? future : history, to = redo ? history : future;
   if (!from.length) return;
   const current = clone(draft);
-  if (forceMode()) forceHistory.set(current, clone(forceLayouts.get(contextKey())?.positions ?? {}));
+  if (forceMode() || forceHistory.has(from.at(-1))) forceHistory.set(current, clone(forceLayouts.get(contextKey())?.positions ?? {}));
   to.push(current); const next = from.pop();
   draft = next;
-  if (forceMode()) {
+  if (forceHistory.has(next)) {
     compute.cancel();
     forceLayouts.set(contextKey(), { positions: forceHistory.get(next) ?? { ...clone(draft.positions), ...clone(draft.projectionPositions ?? {}) }, topology: null });
   }
@@ -1110,7 +1135,9 @@ function render(withInspector = true) {
     const displayGraph = displayGraphOf(graph);
     // 收起 is-a 后，只在旧投影里存在的父概念或分类边必须同时失去选中状态。
     if (!selectionInDisplay(displayGraph, selection)) selection = null;
-    const routing = canvas.update(graph, positions, activeId, selection, definitionMode(), { layoutMode: 'force', ...displayOptions(), highlightDepth: graphHighlightDepth(),
+    const restoredRoutes = forceMode() ? null : restoreRouteCache(displayGraph, positions, draft?.routeCache);
+    if (restoredRoutes) canvas.primeRoutes(displayGraph, positions, restoredRoutes);
+    const routing = canvas.update(graph, positions, activeId, selection, definitionMode(), { layoutMode: forceMode() ? 'force' : 'orthogonal', deferRouting: opening && !restoredRoutes, ...displayOptions(), highlightDepth: graphHighlightDepth(),
       tagDefinitions: workspace.definitions.tagDefinitions ?? [], nodeColors: draft?.nodeColors ?? {}, nodeStyles: draft?.nodeStyles ?? {} });
     $('file-kind').textContent = overviewMode() ? '总览' : '机制';
     $('file-name').textContent = overviewMode() ? workspace.manifest.name : activeId === null ? '未选择机制' : draft.name;
@@ -1829,17 +1856,14 @@ function rememberForcePositions(positions) {
   forceLayouts.set(key, { positions: { ...previous?.positions, ...clone(positions) }, topology: forceTopologyKey(displayGraphOf(graph)), pending: false });
   if (overviewMode()) Object.assign(overviewState().positions, clone(positions));
 }
-// 一次拖动包含松手后的收敛过程；中途保存、撤销或切图先完成这一笔编辑。
+// 一次拖动包含松手后的收敛过程；位置历史只属于页面会话，不进入机制草稿。
 // tick 只更新坐标和画布，不重新合成领域图、不重建 DOM、不写文件。
 function commitForcePositions(session, positions) {
   if (!session.editRequested || contextKey() !== session.key || !forceMode() || overviewMode()) return;
-  edit(data => {
-    for (const node of session.graph.nodes) {
-      const target = isEndpointProjection(node) ? (data.projectionPositions ??= {}) : data.positions;
-      target[node.id] = clone(positions[node.id]);
-    }
-    delete data.routeCache;
-  }, { topology: false, refresh: false, previousPositions: session.previousPositions });
+  if (json(session.previousPositions) === json(positions)) return;
+  const previous = clone(draft);
+  forceHistory.set(previous, clone(session.previousPositions));
+  history.push(previous); if (history.length > 80) history.shift(); future = [];
 }
 function finishForceSession({ commit = true, rollback = false } = {}) {
   const session = forceSession;
@@ -1881,7 +1905,6 @@ function beginForceSession(display, positions, { editRequested = false, rearrang
       commitForcePositions(session, next);
       if (fitView && session.camera && json(session.camera) === json(canvas.camera)) canvas.fit();
       updateStatus(); session.resolve?.(true);
-      if (rearrange && session.editRequested && dirty()) void saveDraft({ blocking: false });
     },
     onError: error => {
       if (!current()) return;
@@ -1944,6 +1967,29 @@ function runGraphCompute(request) {
   return compute.run({ ...request, isCurrent: () => requestCurrent()
     && intent.contextId === contextKey() + '/' + screen && intent.epoch === geometryEpoch });
 }
+async function commitSettledGeometry(result, { recordHistory = false } = {}) {
+  if (forceMode()) return false;
+  const display = displayGraphOf(graph), positions = result?.positions;
+  if (!positions || !Array.isArray(result.routes)) throw new Error('图计算没有返回完整的位置与连线。');
+  for (const node of display.nodes) if (!Number.isFinite(positions[node.id]?.x) || !Number.isFinite(positions[node.id]?.y)) {
+    throw new Error('图计算返回了无效节点坐标：' + node.id);
+  }
+  const routes = new Map(result.routes), routeCache = result.routeCache ?? createRouteCache(display, positions, routes);
+  if (!routeCache || !restoreRouteCache(display, positions, routeCache)) throw new Error('图计算返回的连线不完整，未提交整理结果。');
+  const persist = recordHistory || result.commitPositions || result.persistRouteCache === true;
+  if (persist) {
+    if (recordHistory) { history.push(clone(draft)); if (history.length > 80) history.shift(); future = []; }
+    for (const node of display.nodes) {
+      (isEndpointProjection(node) ? (draft.projectionPositions ??= {}) : draft.positions)[node.id] = clone(positions[node.id]);
+    }
+    draft.routeCache = routeCache; geometryEpoch++;
+  }
+  canvas.primeRoutes(display, positions, routes);
+  // 后台补线固定节点，仅更新画面；用户编辑才将完整几何写入草稿。
+  await render();
+  if (result.warnings?.length) $('tool-hint').textContent = result.warnings.join(' ');
+  return true;
+}
 const canvas = new GraphCanvas($('canvas'), {
   name, graphName,
   getViewportInsets: () => ({
@@ -1951,6 +1997,7 @@ const canvas = new GraphCanvas($('canvas'), {
     top: $('graph-find-bar').hidden ? 100 : Math.max(100, $('graph-find-bar').getBoundingClientRect().bottom - $('canvas').getBoundingClientRect().top + 24),
   }),
   computeGraph: request => runGraphCompute(request),
+  commitGeometry: result => commitSettledGeometry(result),
   routeError: error => showError(error),
   snapEnabled: () => true,
   blankDoubleClick: () => {
@@ -1961,18 +2008,22 @@ const canvas = new GraphCanvas($('canvas'), {
     selection = value;
     canvas.updateSelection(value); inspect(); updateStatus();
   },
-  // 总览坐标只留在运行态；机制拖动写入当前草稿，绝不回写共享概念定义。
+  // 总览与力导向位置只留在运行态；连线图拖动写入机制草稿。
   canMove: id => !busy() && !saveFailure.blocked && !definitionMode() && !!graph?.nodes.some(node => node.id === id),
   forceDragStart: ids => startForceDrag(ids),
   forceDragMove: (ids, positions) => forceSession?.engine.drag(ids, positions),
   forceDragEnd: () => forceSession?.engine.dragEnd(),
   forceDragCancel: () => finishForceSession({ commit: false, rollback: true }),
   move: positions => {
-    if (!forceMode()) return;
+    if (definitionMode() || docsMode() || !workspace) return;
     const previousPositions = projection();
     compute.cancel();
-    positions = { ...previousPositions, ...positions }; rememberForcePositions(positions);
-    if (overviewMode()) { geometryEpoch++; render(); return; }
+    positions = { ...previousPositions, ...positions };
+    if (forceMode()) {
+      rememberForcePositions(positions);
+      commitForcePositions({ editRequested: true, key: contextKey(), previousPositions }, positions);
+      geometryEpoch++; render(); return;
+    }
     const regular = {}, scoped = {};
     for (const [id, point] of Object.entries(positions)) (isEndpointProjection(graph?.nodes.find(node => node.id === id)) ? scoped : regular)[id] = point;
     edit(data => { Object.assign(data.positions, regular); Object.assign(data.projectionPositions ??= {}, scoped); delete data.routeCache; }, { topology: false, previousPositions });
@@ -1998,8 +2049,24 @@ const canvas = new GraphCanvas($('canvas'), {
   },
 });
 async function autoLayout({ fitView = false } = {}) {
-  if (!forceMode() || busy() || arranging || !graph?.nodes?.length || saveFailure.blocked) return;
-  return arrangeForceGraph({ fitView });
+  if (definitionMode() || docsMode() || busy() || arranging || !graph?.nodes?.length || saveFailure.blocked) return;
+  if (forceMode()) return arrangeForceGraph({ fitView });
+  const display = displayGraphOf(graph), positions = projection(), key = contextKey();
+  const geometryKey = graphGeometryKey(display, positions);
+  arranging = true; updateStatus();
+  let committed = false;
+  try {
+    const result = await runGraphCompute({ kind: 'layout', geometryKey,
+      payload: { graph: display, positions, selectedIds: canvas.selectedIds(), cachedRoutes: [...canvas.routed] },
+      isCurrent: () => !forceMode() && contextKey() === key && graphGeometryKey(displayGraphOf(graph), projection()) === geometryKey });
+    committed = await commitSettledGeometry(result, { recordHistory: true });
+    if (fitView && committed) canvas.fit();
+    return committed;
+  } catch (error) { if (!computeCancelled(error)) throw error; return false; }
+  finally {
+    arranging = false; updateStatus();
+    if (committed && dirty()) void saveDraft({ blocking: false });
+  }
 }
 
 async function applyBrowsingWorkspace(opened, { restoreSourceState }) {
@@ -2472,6 +2539,7 @@ $('reload-error').onclick = () => (browserWorkspace || workspace ? refreshProjec
 $('undo').onclick = () => undo(); $('redo').onclick = () => undo(true);
 $('fit').onclick = () => canvas.fit();
 $('auto-layout').onclick = () => autoLayout({ fitView: true }).catch(showError);
+for (const mode of ['force', 'orthogonal']) $('graph-mode-' + mode).onclick = () => { void changeGraphMode(mode).catch(showError); };
 $('toggle-information-bar').onclick = () => {
   hoverTooltipsEnabled = !hoverTooltipsEnabled;
   saveUiPreference('mechanics:hover-tooltips-enabled', hoverTooltipsEnabled);

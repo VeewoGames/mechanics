@@ -2189,13 +2189,14 @@ export class GraphCanvas {
   }
   moveRasterHover(event) {
     const target = this.tooltipTarget(event);
-    const node = target?.dataset?.node ?? null, edge = node ? null : target?.dataset?.edge ?? null;
-    this.root.classList?.toggle?.('force-hover', Boolean(target));
-    if (node === this.forceRasterHoverId && edge === this.forceHoverEdgeId) { this.moveTooltip(event); return; }
+    const node = target?.dataset?.node ?? null, edge = node || !this.tooltipsEnabled ? null : target?.dataset?.edge ?? null;
+    this.root.classList?.toggle?.('force-hover', Boolean(node || edge));
+    // 关闭说明时仍跟踪指针，按住 Shift 可立即在当前位置恢复连线悬停。
+    if (target) this.showTooltip(event, target);
+    else { this.tooltipPointer = null; if (this.tooltip) this.tooltip.hidden = true; }
+    if (node === this.forceRasterHoverId && edge === this.forceHoverEdgeId) return;
     this.forceRasterHoverId = node; this.forceHoverEdgeId = edge;
     if (this.layoutMode === 'force') this.requestRasterDraw();
-    if (target) this.showTooltip(event);
-    else { this.tooltipPointer = null; if (this.tooltip) this.tooltip.hidden = true; }
   }
   clearRasterHover(hideTooltip = false) {
     const changed = this.forceRasterHoverId || this.forceHoverEdgeId;
@@ -2274,11 +2275,19 @@ export class GraphCanvas {
     this.tooltipsEnabled = Boolean(enabled);
     if (!this.tooltipsEnabled) {
       if (this.tooltip) this.tooltip.hidden = true;
+      if (this.forceHoverEdgeId) {
+        this.forceHoverEdgeId = null;
+        this.root.classList?.toggle?.('force-hover', Boolean(this.forceRasterHoverId));
+        if (this.layoutMode === 'force') this.requestRasterDraw();
+      }
       return;
     }
-    if (this.tooltipPointer) this.showTooltip(this.tooltipPointer);
+    if (this.tooltipPointer) {
+      if (this.layoutMode === 'force' && !this.gesture) this.moveRasterHover(this.tooltipPointer);
+      else this.showTooltip(this.tooltipPointer);
+    }
   }
-  showTooltip(event) {
+  showTooltip(event, target = null) {
     this.tooltipPointer = {
       target: event.target,
       pointerType: event.pointerType,
@@ -2286,7 +2295,7 @@ export class GraphCanvas {
       clientY: event.clientY,
     };
     if (!this.tooltipsEnabled || event.pointerType && event.pointerType !== 'mouse') return;
-    const target = this.tooltipTarget(event), text = target?.dataset.tooltip?.trim();
+    const text = (target ?? this.tooltipTarget(event))?.dataset.tooltip?.trim();
     if (!this.tooltip) return;
     if (!text) { this.tooltip.hidden = true; return; }
     this.tooltip.textContent = text; this.tooltip.hidden = false; this.moveTooltip(event);
@@ -3168,12 +3177,6 @@ export class GraphCanvas {
     this.ensureForceIndex();
     const bounds = this.forceViewportBounds(), edgeIds = allEdges ? this.forceEdgeSlots.keys() : new Set();
     this.forceVisibleNodes ??= new Map(); this.forceVisibleEdges ??= new Map();
-    this.forceDirtyLabels ??= new Set();
-    const showLabels = !(this.camera?.scale < .45);
-    const updateLabel = (id, elements, geometry) => {
-      elements.label.setAttribute('x', geometry.labelX); elements.label.setAttribute('y', geometry.labelY);
-      this.forceDirtyLabels.delete(id);
-    };
     for (const id of ids) {
       const point = positions[id], element = this.nodeElements?.get(id);
       if (!point) continue;
@@ -3196,14 +3199,10 @@ export class GraphCanvas {
       const previous = this.forceVisibleEdges.get(id);
       if (previous !== visible) { elements.group?.setAttribute('display', visible ? 'inline' : 'none'); this.forceVisibleEdges.set(id, visible); }
       if (!visible) continue;
-      if (!positionsChanged && previous === true) {
-        if (showLabels && this.forceDirtyLabels.has(id)) updateLabel(id, elements, this.routed.get(id));
-        continue;
-      }
+      if (!positionsChanged && previous === true) continue;
       const geometry = forceEdgeGeometry(a, b, edge.source, edge.target, offset, index, radii);
       this.routed.set(id, geometry);
       elements.hit.setAttribute('d', geometry.path); elements.line.setAttribute('d', geometry.path);
-      if (showLabels) updateLabel(id, elements, geometry); else this.forceDirtyLabels.add(id);
     }
   }
   updateForcePositions(positions, frameVersion = this.forceFrameVersion) {
@@ -3252,13 +3251,11 @@ export class GraphCanvas {
         ? forceEdgeGeometry(positions[edge.source], positions[edge.target], edge.source, edge.target, offset, index)
         : incrementalEdgeGeometry(edge, positions, previousPositions, this.routed.get(edge.id), offset);
       elements.hit.setAttribute('d', geometry.path); elements.line.setAttribute('d', geometry.path);
-      elements.label.setAttribute('x', geometry.labelX); elements.label.setAttribute('y', geometry.labelY);
     }
   }
   draw({ reroute = false } = {}) {
     this.root.replaceChildren();
     this.selectionBox = null;
-    this.forceDirtyLabels = new Set();
     const defs = svg('defs');
     for (const [id, fill] of [['positive', '#328577'], ['negative', '#bd7064'], ['random', '#8b6fb3'], ['specializes', '#c49a26'], ['part-of', '#4f7f9a'], ['empty-rule', '#9a9fa6']]) {
       const marker = svg('marker', { id, markerWidth: 7, markerHeight: 7, refX: 6, refY: 3.5, orient: 'auto-start-reverse', markerUnits: 'strokeWidth' });
@@ -3306,7 +3303,7 @@ export class GraphCanvas {
         geometry = edgeGeometry(a, b, edge.source, edge.target, offset);
       }
       if (geometry.points) geometry = { ...geometry, path: roundedPath(geometry.points), ...routeLabel(geometry.points) };
-      const { path, labelX, labelY } = geometry;
+      const { path } = geometry;
       const sign = edge.relation === 'specializes' ? 'specializes' : edge.relation === 'part-of' ? 'part-of' : edge.sign === 1 ? 'positive' : edge.sign === -1 ? 'negative' : 'random';
       const appearance = hasRuleText(edge) ? sign : 'empty-rule';
       const selected = this.selection?.type === 'edge' && this.selection.id === edge.id;
@@ -3319,10 +3316,9 @@ export class GraphCanvas {
       const hit = svg('path', { d: path, class: 'edge-hit' });
       const line = svg('path', { d: path, class: `edge-line edge-${appearance} ${selected ? 'selected' : ''}`, 'marker-end': `url(#${appearance})`, ...(edge.relation !== 'influence' ? { 'stroke-dasharray': edge.relation === 'part-of' ? '2 4' : '6 4' } : {}), 'pointer-events': 'none' });
       group.append(hit, line);
-      const label = svg('text', { x: labelX, y: labelY, class: `edge-label ${appearance}` });
-      // 连线类型符号统一为字符体系（与工具栏、图例、检查器一致）：＋ 正向、− 负向、？ 随机、is-a 特化 / 是某种
-      label.textContent = sign === 'specializes' ? 'is-a' : sign === 'part-of' ? 'part-of' : edge.sign === 1 ? '＋' : edge.sign === -1 ? '−' : '？'; group.append(label); this.world.append(group);
-      this.edgeElements.set(edge.id, { group, hit, line, label });
+      // 线上不叠加关系符号，类型仍由颜色、虚线、方向箭头及提示表达。
+      this.world.append(group);
+      this.edgeElements.set(edge.id, { group, hit, line });
     }
     const roles = this.nodeRoles(), force = this.layoutMode === 'force';
     if (force) this.ensureForceIndex();

@@ -62,33 +62,73 @@ test('更换选择立即切换高亮起点，多选取并集，选中关系仅�
 });
 
 const app = await readFile(new URL('../src/web/app.mjs', import.meta.url), 'utf8');
-test('层数按钮只更新画布注意力，不重建显示图、结束模拟或改变相机，按上下文记忆', async () => {
-  const controls = new Map(), states = new Map(), depths = [];
-  let key = 'project/overview';
-  const context = vm.createContext({ graph, selection: { type: 'node', id: 'a' }, geometryEpoch: 0,
-    graphHighlightDepths: states, contextKey: () => key, projectDisplayGraph, currentTaxonomyPresentation: () => null,
+function highlightHarness(storage = new Map()) {
+  const controls = new Map(), depths = [];
+  const context = vm.createContext({ graph, selection: { type: 'node', id: 'a' }, geometryEpoch: 0, key: 'project/overview',
+    contextKey: () => context.key, projectDisplayGraph, currentTaxonomyPresentation: () => null,
+    localStorage: { getItem: key => storage.get(key) ?? null, setItem: (key, value) => storage.set(key, value) },
     overviewMode: () => false, draft: null, forceMode: () => true, busy: () => false,
-    $: id => { if (!controls.has(id)) controls.set(id, { setAttribute() {} }); return controls.get(id); },
+    $: id => { if (!controls.has(id)) controls.set(id, { setAttribute(name, value) { if (name === 'aria-pressed') this.pressed = value; } }); return controls.get(id); },
     finishForceSession() { throw new Error('高亮不能结束模拟'); },
     canvas: { setHighlightDepth: depth => depths.push(depth), fit() { throw new Error('高亮不能改变相机'); } },
     render: async () => { throw new Error('高亮不能重建显示图'); },
   });
+  vm.runInContext(app.slice(app.indexOf('const saveUiPreference ='), app.indexOf('const persistTabState =')), context);
+  vm.runInContext(app.slice(app.indexOf('let preferredHighlightDepth ='), app.indexOf('let hoverTooltipsEnabled =')), context);
   vm.runInContext(app.slice(app.indexOf('const displayOptions ='), app.indexOf('// 隐藏的节点或连线不能继续被选中')), context);
+  return { context, controls, depths, run: code => vm.runInContext(code, context) };
+}
+
+test('层数按钮只更新画布注意力，不重建显示图、结束模拟或改变相机，全局沿用', async () => {
+  const storage = new Map(), { context, controls, depths } = highlightHarness(storage);
   vm.runInContext('updateGraphFocusControls()', context);
   assert.equal(controls.get('graph-depth-1').disabled, false);
   assert.equal(vm.runInContext('graphHighlightDepth()', context), 1);
   context.selection = { type: 'node', id: 'b' };
   await vm.runInContext('changeGraphDepth(3)', context);
-  assert.deepEqual(depths, [3]); assert.equal(states.get(key), 3);
+  assert.deepEqual(depths, [3]); assert.equal(storage.get('mechanics:graph-highlight-depth'), '3');
   assert.equal(vm.runInContext('displayGraphOf().nodes.length', context), 6);
   assert.equal(context.geometryEpoch, 0);
-  key = 'project/mechanic/other';
+  context.key = 'project/mechanic/other';
   assert.equal(vm.runInContext('displayGraphOf().nodes.length', context), 6);
-  assert.equal(vm.runInContext('graphHighlightDepth()', context), 1);
-  key = 'project/overview';
+  assert.equal(vm.runInContext('graphHighlightDepth()', context), 3);
+  context.key = 'other-project/overview';
+  assert.equal(vm.runInContext('graphHighlightDepth()', context), 3);
   await vm.runInContext('changeGraphDepth(null)', context);
   assert.equal(vm.runInContext('displayGraphOf().nodes.length', context), 6);
   assert.equal(vm.runInContext('graphHighlightDepth()', context), null);
+  assert.equal(storage.get('mechanics:graph-highlight-depth'), 'all');
   context.selection = null; vm.runInContext('updateGraphFocusControls()', context);
   assert.equal(controls.get('graph-depth-1').disabled, true);
+});
+
+test('四种高亮选项在页面重建后恢复，按钮状态与全局偏好一致', async () => {
+  const storage = new Map();
+  for (const depth of [3, null, 2, 1]) {
+    const first = highlightHarness(storage);
+    await first.run(`changeGraphDepth(${depth})`);
+    const restored = highlightHarness(storage);
+    assert.equal(restored.run('graphHighlightDepth()'), depth);
+    restored.run('updateGraphFocusControls()');
+    for (const option of [1, 2, 3, null]) {
+      const control = restored.controls.get('graph-depth-' + (option ?? 'all'));
+      assert.equal(control.pressed, String(option === depth));
+    }
+  }
+});
+
+test('高亮偏好缺失、损坏或存储不可用时默认一层，禁用状态不改偏好', async () => {
+  for (const value of [undefined, '', '0', '4', 'null', 'true']) {
+    const storage = new Map(value === undefined ? [] : [['mechanics:graph-highlight-depth', value]]);
+    const { context, run } = highlightHarness(storage);
+    assert.equal(run('graphHighlightDepth()'), 1);
+    context.selection = null; await run('changeGraphDepth(3)');
+    assert.equal(storage.get('mechanics:graph-highlight-depth'), value);
+  }
+  const storage = { get() { throw new Error('存储不可用'); }, set() { throw new Error('存储不可用'); } };
+  const { run } = highlightHarness(storage);
+  assert.equal(run('graphHighlightDepth()'), 1);
+  await run('changeGraphDepth(2)');
+  assert.equal(run('graphHighlightDepth()'), 2, '存储不可用仍可在当前页面切换');
+  await assert.rejects(run('changeGraphDepth(4)'), /层数/);
 });

@@ -227,6 +227,15 @@ button.help-tip:hover,button.help-tip:focus-visible{background:var(--surface-3);
 /* 画布工具：关系按钮带各自的关系色。 */
 #toolbar{position:absolute;bottom:40px;left:50%;z-index:2;transform:translateX(-50%);display:flex;align-items:center;gap:4px;padding:5px}
 #toolbar.overview-tools .divider{display:none}
+.graph-mode-controls{position:relative;isolation:isolate;display:grid;grid-template-columns:1fr 1fr;flex:none;width:148px;margin-left:6px;padding:3px;border:1px solid var(--line);border-radius:10px;background:var(--surface-2);box-shadow:inset 0 1px 2px rgb(22 40 31 / .04)}
+.graph-mode-controls::before{content:"";position:absolute;z-index:-1;left:3px;top:3px;bottom:3px;width:calc((100% - 6px)/2);border:1px solid rgb(47 107 87 / .12);border-radius:7px;background:var(--surface);box-shadow:0 1px 3px rgb(22 40 31 / .10);transition:transform 160ms cubic-bezier(.23,1,.32,1)}
+.graph-mode-controls[data-mode="orthogonal"]::before{transform:translateX(100%)}
+.graph-mode-controls button{min-height:28px;padding:4px 9px;white-space:nowrap;font-size:12px;font-weight:500;border:0;border-radius:7px;background:transparent;color:var(--ink-3);transition:color 120ms,transform 120ms cubic-bezier(.23,1,.32,1)}
+.graph-mode-controls button:hover{color:var(--ink)}
+.graph-mode-controls button[aria-pressed="true"]{color:var(--accent-strong);font-weight:600}
+.graph-mode-controls button:active:not(:disabled){transform:scale(.97)}
+.graph-mode-controls:has(button:focus-visible)::before{transition:none}
+@media(prefers-reduced-motion:reduce){.graph-mode-controls::before,.graph-mode-controls button{transition:none}}
 button.tool{height:34px;min-width:34px;padding:4px 8px;border:0;border-radius:7px;background:transparent;color:var(--ink-2);font-size:17px}
 .tool:hover{background:var(--surface-3)}
 .tool.active{background:var(--accent-soft);color:var(--accent)}
@@ -279,12 +288,11 @@ button.tool{height:34px;min-width:34px;padding:4px 8px;border:0;border-radius:7p
 #canvas.flash-roles .node.node-start rect{animation:role-flash-start .75s ease-in-out 3}
 #canvas.flash-roles .node.node-end rect{animation:role-flash-end .75s ease-in-out 3}
 .edge-line{fill:none;stroke-width:.8}
+#canvas:not(.force-graph) .edge-line:not(.selected){stroke-width:2}
 .edge-line.selected{stroke-width:3;opacity:1}
 .edge-hit{fill:none;stroke:transparent;stroke-width:15;cursor:pointer}
-.edge-label{font-size:13px;font-weight:700;pointer-events:none;paint-order:stroke;stroke:var(--bg);stroke-width:4px;stroke-linejoin:round}
 .edge-positive{stroke:var(--positive)}.edge-negative{stroke:var(--negative)}.edge-random{stroke:var(--random)}.edge-specializes{stroke:var(--specializes)}.edge-part-of{stroke:var(--part-of)}
 .edge-line.edge-empty-rule{stroke:var(--empty-rule)}
-.edge-label.positive{fill:var(--positive)}.edge-label.negative{fill:var(--negative)}.edge-label.random{fill:var(--random)}.edge-label.specializes{fill:var(--specializes)}.edge-label.part-of{fill:var(--part-of)}.edge-label.empty-rule{fill:var(--empty-rule)}
 .selection-box{fill:rgb(47 107 87 / .10);stroke:var(--accent);stroke-width:1;vector-effect:non-scaling-stroke;stroke-dasharray:5 3}
 
 /* 力导向画布用明暗与线宽表达阅读焦点，关系本身的符号和语义颜色保持不变。 */
@@ -307,7 +315,6 @@ button.tool{height:34px;min-width:34px;padding:4px 8px;border:0;border-radius:7p
 #canvas.force-graph [data-edge] .edge-line{stroke-opacity:.62}
 #canvas.force-graph [data-edge].is-related .edge-line,#canvas.force-graph .edge-line.selected{stroke-opacity:1}
 #canvas.force-graph .node.is-focus-center rect{filter:none}
-#canvas.force-graph .edge-label{opacity:.85}
 /* 力导向节点是按连接数缩放的圆：静止柔和，选中和聚焦邻居换成同色相的饱和色；名字挂在圆下方。 */
 #canvas.force-graph .node circle.node-dot{fill:var(--node-fill,#c9dcd3);stroke:var(--node-stroke,#8fb3a3);stroke-width:1.2;transition:fill .15s ease}
 #canvas.force-graph .node circle.node-halo{fill:none;stroke:transparent;stroke-width:2}
@@ -646,7 +653,7 @@ dialog:has(.project-dialog),dialog:has(.quick-open-search),dialog:has(.project-f
 .tag-choice.selected{border-color:var(--tag-color);box-shadow:inset 0 0 0 1px var(--tag-color);background:color-mix(in srgb,var(--tag-color) 22%,#fff);color:var(--ink);font-weight:600}
 
 /* 总览缩小时隐藏读不清的细节；放大后恢复完整卡片与关系说明。 */
-.force-compact .edge-label,.force-compact .node-chip{display:none}
+.force-compact .node-chip{display:none}
 .force-compact .node rect{filter:none}
 .force-minimal .node text{display:none}
 
